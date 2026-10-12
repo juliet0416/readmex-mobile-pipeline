@@ -16,7 +16,10 @@ test('successful latest HEAD and Range verifies expected bytes and bypassed cach
   let calls = 0;
   await verifyPublicDownload('https://cdn.example.com/latest.apk', 5, 'abc', true, async (_url, init) => {
     calls++;
-    return init.method === 'HEAD' ? new Response(null, { status: 200, headers: { 'content-length': '5', etag: '"abc"', 'cache-control': 'no-store, max-age=0', 'cf-cache-status': 'BYPASS' } }) : new Response('a', { status: 206, headers: { 'content-range': 'bytes 0-0/5' } });
+    return init.method === 'HEAD' ? new Response(null, { status: 200, headers: { 'content-length': '5', etag: '"abc"', 'cache-control': 'no-store, max-age=0', 'cf-cache-status': 'BYPASS' } }) : new Response('a', { status: 206, headers: { 'content-range': 'bytes 0-0/5', 'cache-control': 'no-store, max-age=0', 'cf-cache-status': 'BYPASS' } });
   });
   assert.equal(calls, 2);
+});
+test('latest Range cache policy must match HEAD even on the first cache MISS', async () => {
+  await assert.rejects(verifyPublicDownload('https://cdn.example.com/latest.apk', 5, 'abc', true, async (_url, init) => init.method === 'HEAD' ? new Response(null, { status: 200, headers: { 'content-length': '5', etag: '"abc"', 'cache-control': 'no-store' } }) : new Response('a', { status: 206, headers: { 'content-range': 'bytes 0-0/5', 'cache-control': 'max-age=2678400', 'cf-cache-status': 'MISS' } })), /cache/i);
 });

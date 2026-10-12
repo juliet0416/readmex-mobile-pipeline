@@ -117,7 +117,7 @@ export async function verifyPublicDownload(url, size, etag, latest, fetchImpl = 
   if (head.status !== 200 || Number(head.headers.get('content-length')) !== size || head.headers.get('etag')?.replace(/^W\//, '').replace(/"/g, '') !== etag.replace(/"/g, '')) fail(`APK public metadata verification failed (HTTP ${head.status})`);
   if (latest && (!/(?:^|,)\s*no-store\b/i.test(head.headers.get('cache-control') ?? '') || head.headers.get('cf-cache-status') === 'HIT')) fail('Latest APK is cached: configure a Cloudflare Bypass cache rule and purge this URL');
   const range = await fetchImpl(url, { method: 'GET', redirect: 'error', headers: { Range: 'bytes=0-0' }, signal: AbortSignal.timeout(30000) });
-  if (latest && ['HIT', 'STALE', 'UPDATING', 'REVALIDATED'].includes(range.headers.get('cf-cache-status'))) {
+  if (latest && (!/(?:^|,)\s*no-store\b/i.test(range.headers.get('cache-control') ?? '') || ['HIT', 'STALE', 'UPDATING', 'REVALIDATED'].includes(range.headers.get('cf-cache-status')))) {
     await range.body?.cancel();
     fail('Latest APK Range response is cached: configure Cloudflare Bypass cache');
   }

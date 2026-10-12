@@ -195,14 +195,34 @@ jobs:
           PLAY_SERVICE_ACCOUNT_FILE: ${{ steps.account.outputs.json_path }}
           APP_PACKAGE_ID: ${{ vars.APP_PACKAGE_ID }}
         run: node scripts/google-play.mjs preflight
+      - name: Prepare tracked Play release edit
+        id: play_edit
+        env:
+          PLAY_SERVICE_ACCOUNT_FILE: ${{ steps.account.outputs.json_path }}
+          APP_PACKAGE_ID: ${{ vars.APP_PACKAGE_ID }}
+        run: node scripts/google-play.mjs prepare
       - name: Upload AAB to Google Play
+        id: play
+        continue-on-error: true
         uses: r0adkll/upload-google-play@v1
         with:
+          existingEditId: ${{ steps.play_edit.outputs.edit_id }}
           serviceAccountJson: ${{ steps.account.outputs.json_path }}
           packageName: ${{ vars.APP_PACKAGE_ID }}
           releaseFiles: ${{ runner.temp }}/artifacts/*.aab
           tracks: ${{ inputs.track }}
           status: ${{ inputs.release_status }}
+      - name: Recover and verify failed Play commit
+        if: steps.play.outcome == 'failure'
+        env:
+          PLAY_SERVICE_ACCOUNT_FILE: ${{ steps.account.outputs.json_path }}
+          APP_PACKAGE_ID: ${{ vars.APP_PACKAGE_ID }}
+          PLAY_EDIT_ID: ${{ steps.play_edit.outputs.edit_id }}
+          APP_BUILD_NUMBER: ${{ inputs.build_number }}
+          PLAY_TRACK: ${{ inputs.track }}
+          PLAY_RELEASE_STATUS: ${{ inputs.release_status }}
+          PLAY_AAB_FILE: ${{ runner.temp }}/artifacts/readmex-${{ inputs.version }}-${{ inputs.build_number }}.aab
+        run: node scripts/google-play.mjs recover
       - name: Cleanup Play credentials
         if: always()
         run: rm -f "$RUNNER_TEMP/readmex-play-service-account.json"
