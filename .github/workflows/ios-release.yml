@@ -13,6 +13,9 @@ on:
       build_number:
         description: Monotonically increasing CFBundleVersion
         required: true
+      expected_source_sha:
+        description: Optional source SHA to verify after checkout
+        required: false
       submit:
         description: Upload IPA to TestFlight
         type: boolean
@@ -55,7 +58,14 @@ jobs:
           path: source
       - name: Record source commit
         id: source
-        run: echo "sha=$(git -C source rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+        env:
+          EXPECTED_SOURCE_SHA: ${{ inputs.expected_source_sha }}
+        run: |
+          sha=$(git -C source rev-parse HEAD)
+          if [ -n "$EXPECTED_SOURCE_SHA" ] && [ "$sha" != "$EXPECTED_SOURCE_SHA" ]; then
+            echo 'Source tag changed after release preflight'; exit 1
+          fi
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
       - uses: actions/setup-node@v4
         with:
           node-version: '22.16.0'

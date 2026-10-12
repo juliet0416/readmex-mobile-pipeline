@@ -1,5 +1,5 @@
 name: Android Release
-run-name: Android ${{ inputs.version }} (${{ inputs.build_number }}) · ${{ inputs.artifact_type }} · ${{ inputs.ref }}
+run-name: Android ${{ inputs.artifact_type == 'both' && 'AAB + APK' || inputs.artifact_type == 'apk' && 'APK' || 'AAB' }} · ${{ inputs.version }} (${{ inputs.build_number }}) · ${{ inputs.ref }}
 
 on:
   workflow_dispatch:
@@ -13,6 +13,9 @@ on:
       build_number:
         description: Increasing Android versionCode
         required: true
+      expected_source_sha:
+        description: Optional source SHA to verify after checkout
+        required: false
       artifact_type:
         description: Build AAB for Play, APK for download, or both
         type: choice
@@ -83,7 +86,14 @@ jobs:
           path: source
       - name: Record source commit
         id: source
-        run: echo "sha=$(git -C source rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+        env:
+          EXPECTED_SOURCE_SHA: ${{ inputs.expected_source_sha }}
+        run: |
+          sha=$(git -C source rev-parse HEAD)
+          if [ -n "$EXPECTED_SOURCE_SHA" ] && [ "$sha" != "$EXPECTED_SOURCE_SHA" ]; then
+            echo 'Source tag changed after release preflight'; exit 1
+          fi
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
       - uses: actions/setup-node@v4
         with:
           node-version: '22.16.0'
@@ -133,12 +143,15 @@ jobs:
         id: verify
         run: |
           mkdir -p "$RUNNER_TEMP/artifacts"
+          checker=source/scripts/mobile-release/check-android-page-size.py
+          if [ ! -f "$checker" ]; then checker=source/scripts/check-android-page-size.py; fi
+          test -s "$checker"
           if [ "$ARTIFACT_TYPE" != apk ]; then
             aab=source/mobile-app/android/app/build/outputs/bundle/release/app-release.aab
             test -s "$aab"
             jarsigner -J-Duser.language=en -J-Duser.country=US -verify "$aab" > "$RUNNER_TEMP/aab-signature.log"
             python3 -c 'import pathlib,sys; s=pathlib.Path(sys.argv[1]).read_text(); assert "jar verified." in s and "jar is unsigned" not in s, "AAB signature is not verified"' "$RUNNER_TEMP/aab-signature.log"
-            python3 source/scripts/check-android-page-size.py "$aab"
+            python3 "$checker" "$aab"
             cp "$aab" "$RUNNER_TEMP/artifacts/readmex-${APP_VERSION}-${APP_BUILD_NUMBER}.aab"
           fi
           if [ "$ARTIFACT_TYPE" != aab ]; then
@@ -146,7 +159,7 @@ jobs:
             test -s "$apk"
             "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose --print-certs "$apk"
             "$ANDROID_HOME/build-tools/36.0.0/zipalign" -c -P 16 4 "$apk"
-            python3 source/scripts/check-android-page-size.py "$apk"
+            python3 "$checker" "$apk"
             cp "$apk" "$RUNNER_TEMP/artifacts/readmex-${APP_VERSION}-${APP_BUILD_NUMBER}.apk"
           fi
       - name: Save AAB artifact

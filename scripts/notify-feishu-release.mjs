@@ -8,7 +8,8 @@ import { resolveR2Objects } from './upload-r2.mjs';
 export function buildFeishuCardPayload(input) {
   const copy = releaseCopy(input.lang);
   const android = input.platform === 'android';
-  const platform = android ? 'Android' : 'iOS';
+  const artifactLabel = { aab: 'AAB', apk: 'APK', both: 'AAB + APK' }[input.artifactType ?? 'aab'];
+  const platform = android ? `Android ${artifactLabel}` : 'iOS';
   const built = input.buildResult === 'success';
   const failed = !built || (input.submit && input.submitResult !== 'success') || (android && input.publishApk && input.publishResult !== 'success') || ['INVALID', 'FAILED'].includes(input.processingResult);
   const title = (input.connectivity ? copy.connectivity : built ? copy.titleSuccess : input.buildResult === 'cancelled' ? copy.titleCancelled : copy.titleFailure).replace('{{platform}}', platform);

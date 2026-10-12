@@ -68,4 +68,12 @@ if (existsSync(new URL('./notify-feishu-release.mjs', import.meta.url))) {
     assert.match(JSON.stringify(card), /https:\/\/example.com\/apk/);
     assert.ok(!JSON.stringify(card).includes('incorrect.apk'));
   });
+  test('Android success, failure and cancellation titles identify each selected artifact', () => {
+    for (const lang of ['en', 'zh', 'invalid']) for (const buildResult of ['success', 'failure', 'cancelled']) {
+      for (const [artifactType, label] of [['aab', 'AAB'], ['apk', 'APK'], ['both', 'AAB + APK']]) {
+        const card = buildFeishuCardPayload({ ...input, platform: 'android', artifactType, lang, buildResult });
+        assert.ok(card.card.header.title.content.includes(`Android ${label}`));
+      }
+    }
+  });
 }
