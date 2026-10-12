@@ -1,0 +1,171 @@
+name: Archive Tag Release Assets
+run-name: 归档 ${{ inputs.platform }} ${{ inputs.artifact_type }} · ${{ inputs.version }} (${{ inputs.build_number }}) · ${{ inputs.ref }}
+
+on:
+  workflow_call:
+    inputs:
+      ref:
+        type: string
+        required: true
+      source_sha:
+        type: string
+        required: true
+      version:
+        type: string
+        required: true
+      build_number:
+        type: string
+        required: true
+      platform:
+        type: string
+        required: true
+      artifact_type:
+        type: string
+        required: true
+      artifact_run_id:
+        type: string
+        required: true
+      notify_archive:
+        type: boolean
+        default: false
+    secrets:
+      SOURCE_REPO_PAT:
+        required: true
+      FEISHU_RELEASE_WEBHOOK_URL:
+        required: false
+      FEISHU_RELEASE_WEBHOOK_SECRET:
+        required: false
+      FEISHU_RELEASE_WEBHOOK_SECRE:
+        required: false
+    outputs:
+      release_url:
+        value: ${{ jobs.archive.outputs.release_url }}
+      aab_url:
+        value: ${{ jobs.archive.outputs.aab_url }}
+      apk_url:
+        value: ${{ jobs.archive.outputs.apk_url }}
+      ipa_url:
+        value: ${{ jobs.archive.outputs.ipa_url }}
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: 已存在的源码 mobile-vX.Y.Z tag（不会新建）
+        required: true
+      source_sha:
+        description: 该产物实际构建时的完整源码 SHA
+        required: true
+      version:
+        description: 版本，例如 1.0.0
+        required: true
+      build_number:
+        description: 已完成构建的实际构建号
+        required: true
+      platform:
+        description: 产物平台
+        type: choice
+        options: [android, ios]
+        required: true
+      artifact_type:
+        description: 产物类型（iOS 选 ipa）
+        type: choice
+        options: [aab, apk, both, ipa]
+        required: true
+      artifact_run_id:
+        description: 此仓库保存产物的原 Actions run ID
+        required: true
+      notify_archive:
+        description: 发送归档结果飞书卡片
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  archive:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    concurrency:
+      group: readmex-source-release-${{ inputs.ref }}
+      cancel-in-progress: false
+    outputs:
+      release_url: ${{ steps.release.outputs.release_url }}
+      aab_url: ${{ steps.release.outputs.aab_url }}
+      apk_url: ${{ steps.release.outputs.apk_url }}
+      ipa_url: ${{ steps.release.outputs.ipa_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.16.0'
+      - name: Download signed AAB
+        if: inputs.platform == 'android' && inputs.artifact_type != 'apk'
+        uses: actions/download-artifact@v4
+        with:
+          name: android-aab-${{ inputs.version }}-${{ inputs.build_number }}
+          path: ${{ runner.temp }}/release-assets
+          run-id: ${{ inputs.artifact_run_id }}
+          github-token: ${{ github.token }}
+      - name: Download signed APK
+        if: inputs.platform == 'android' && inputs.artifact_type != 'aab'
+        uses: actions/download-artifact@v4
+        with:
+          name: android-apk-${{ inputs.version }}-${{ inputs.build_number }}
+          path: ${{ runner.temp }}/release-assets
+          run-id: ${{ inputs.artifact_run_id }}
+          github-token: ${{ github.token }}
+      - name: Download signed IPA
+        if: inputs.platform == 'ios'
+        uses: actions/download-artifact@v4
+        with:
+          name: ios-release-${{ inputs.version }}-${{ inputs.build_number }}
+          path: ${{ runner.temp }}/release-assets
+          run-id: ${{ inputs.artifact_run_id }}
+          github-token: ${{ github.token }}
+      - name: Verify source tag and archive Release assets
+        id: release
+        env:
+          SOURCE_REPO: ${{ vars.SOURCE_REPO }}
+          SOURCE_REPO_PAT: ${{ secrets.SOURCE_REPO_PAT }}
+          GITHUB_TOKEN: ${{ github.token }}
+          RELEASE_REF: ${{ inputs.ref }}
+          RELEASE_SOURCE_SHA: ${{ inputs.source_sha }}
+          RELEASE_VERSION: ${{ inputs.version }}
+          RELEASE_BUILD_NUMBER: ${{ inputs.build_number }}
+          RELEASE_PLATFORM: ${{ inputs.platform }}
+          RELEASE_ARTIFACT_TYPE: ${{ inputs.artifact_type }}
+          ARTIFACT_RUN_ID: ${{ inputs.artifact_run_id }}
+          ARTIFACT_DIRECTORY: ${{ runner.temp }}/release-assets
+        run: node scripts/publish-source-release.mjs
+
+  notify_archive:
+    needs: archive
+    if: always() && inputs.notify_archive
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.16.0'
+      - name: Notify Feishu archive result
+        env:
+          FEISHU_RELEASE_WEBHOOK_URL: ${{ secrets.FEISHU_RELEASE_WEBHOOK_URL }}
+          FEISHU_RELEASE_WEBHOOK_SECRET: ${{ secrets.FEISHU_RELEASE_WEBHOOK_SECRET || secrets.FEISHU_RELEASE_WEBHOOK_SECRE }}
+          FEISHU_RELEASE_LANG: ${{ vars.FEISHU_RELEASE_LANG || 'zh' }}
+          SOURCE_REPO: ${{ vars.SOURCE_REPO }}
+          RELEASE_PLATFORM: ${{ inputs.platform }}
+          RELEASE_ARTIFACT_TYPE: ${{ inputs.artifact_type }}
+          RELEASE_REF: ${{ inputs.ref }}
+          RELEASE_SOURCE_SHA: ${{ inputs.source_sha }}
+          RELEASE_VERSION: ${{ inputs.version }}
+          RELEASE_BUILD_NUMBER: ${{ inputs.build_number }}
+          RELEASE_ARCHIVE_ONLY: 'true'
+          RELEASE_ARCHIVE_RESULT: ${{ needs.archive.result }}
+          RELEASE_TAG_URL: ${{ needs.archive.outputs.release_url }}
+          RELEASE_TAG_AAB_URL: ${{ needs.archive.outputs.aab_url }}
+          RELEASE_TAG_APK_URL: ${{ needs.archive.outputs.apk_url }}
+          RELEASE_TAG_IPA_URL: ${{ needs.archive.outputs.ipa_url }}
+          GITHUB_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: node scripts/notify-feishu-release.mjs

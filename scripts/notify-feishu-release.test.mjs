@@ -82,4 +82,27 @@ if (existsSync(new URL('./notify-feishu-release.mjs', import.meta.url))) {
     for (const label of ['APK 构建产物（GitHub）', 'APK 下载（本版本）', 'APK 下载（最新版）', '内部测试', '草稿']) assert.ok(body.includes(label), label);
     assert.ok(!body.includes('APK download'));
   });
+  test('Release archive gives direct tag assets and keeps Actions fallback separate', () => {
+    const card = buildFeishuCardPayload({ ...input, lang: 'zh', platform: 'android', artifactType: 'apk', submit: false, archiveResult: 'success', releaseUrl: 'https://github.com/OtterMind/ReadmeX/releases/tag/mobile-v1.0.0', releaseApkUrl: 'https://github.com/OtterMind/ReadmeX/releases/download/mobile-v1.0.0/readmex-1.0.0-2.apk', apkUrl: 'https://example.com/actions-zip' });
+    const body = JSON.stringify(card);
+    assert.match(body, /Tag 产物归档/);
+    assert.match(body, /releases\/download\/mobile-v1.0.0/);
+    assert.match(body, /actions-zip/);
+    assert.match(body, /已归档/);
+  });
+  test('archive failure preserves successful build and downloadable Actions artifact', () => {
+    const card = buildFeishuCardPayload({ ...input, lang: 'zh', archiveResult: 'failure' });
+    assert.equal(card.card.header.template, 'red');
+    assert.match(card.card.header.title.content, /打包成功/);
+    assert.match(JSON.stringify(card), /归档失败/);
+    assert.ok(JSON.stringify(card).includes(input.artifactUrl));
+  });
+  test('archiving historical artifacts reports archive outcome without claiming a new build', () => {
+    for (const [archiveResult, text] of [['success', '归档成功'], ['failure', '归档失败']]) {
+      const card = buildFeishuCardPayload({ ...input, lang: 'zh', archiveOnly: true, archiveResult });
+      assert.match(card.card.header.title.content, new RegExp(text));
+      assert.ok(!JSON.stringify(card).includes('TestFlight'));
+      assert.equal(card.card.header.template, archiveResult === 'success' ? 'green' : 'red');
+    }
+  });
 }

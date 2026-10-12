@@ -45,6 +45,16 @@ The independent `notify` job runs even when source checkout, signing, archive, e
 
 Configure the signed bot's URL and secret with `FEISHU_RELEASE_WEBHOOK_URL` and `FEISHU_RELEASE_WEBHOOK_SECRET`. The truncated legacy name `FEISHU_RELEASE_WEBHOOK_SECRE` is accepted as a fallback. Never commit webhook values or Apple keys. Workflow notifications default to Chinese (`FEISHU_RELEASE_LANG=zh`); set `en` explicitly for English. APK links distinguish the GitHub artifact ZIP (repository access, 14-day retention), the public versioned R2 APK, and the fixed latest APK URL. Play track/status copy is translated too.
 
+## Source tag Release assets
+
+Successful builds using an existing `mobile-vX.Y.Z` tag also archive their signed binaries in the source repository's GitHub Release. `SOURCE_REPO_PAT` must have source repository **Contents: write** permission. The pipeline's own `GITHUB_TOKEN` only needs Actions read permission. Branch/SHA builds keep Actions artifacts and skip tag archiving.
+
+The same Release can hold iOS and Android assets: `readmex-<version>-<build>.ipa`, `.aab`, and `.apk`. Rebuilding a tag adds a new build number; matching existing files are verified and preserved, conflicting bytes are rejected. Releases keep assets until manually deleted; Actions backups still expire after 14 days. Private source Release downloads require source repository access, while public APK distribution remains on R2.
+
+Archiving checks the existing tag's exact source SHA, records that SHA in the Release body, and verifies uploaded size/SHA256. A missing/deleted tag or a moved tag fails archiving without deliberately creating a replacement tag. Store submission, R2 publishing and Release archiving run independently. Feishu reports archiving and links each binary separately, preserving Actions links when archiving fails.
+
+To archive an older run without rebuilding or uploading to stores again, dispatch **Archive Tag Release Assets** (`release-assets.yml`) with the original tag, source SHA, version, build number, platform, artifact type and run ID. Actions artifacts must still be available. The job checks the original successful export/signature steps and notification log metadata before writing to the source Release; old artifacts from a different source commit cannot be attached to a recreated tag.
+
 From the ReadmeX source workspace:
 
 ```sh

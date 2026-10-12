@@ -277,8 +277,22 @@ jobs:
           APP_BUILD_NUMBER: ${{ needs.build.outputs.build_number || inputs.build_number }}
         run: node scripts/upload-r2.mjs
 
+  release_assets:
+    needs: build
+    if: needs.build.result == 'success' && startsWith(inputs.ref, 'mobile-v')
+    uses: ./.github/workflows/release-assets.yml
+    with:
+      ref: ${{ inputs.ref }}
+      source_sha: ${{ needs.build.outputs.source_sha }}
+      version: ${{ inputs.version }}
+      build_number: ${{ needs.build.outputs.build_number }}
+      platform: android
+      artifact_type: ${{ inputs.artifact_type }}
+      artifact_run_id: ${{ github.run_id }}
+    secrets: inherit
+
   notify:
-    needs: [build, submit, publish]
+    needs: [build, submit, publish, release_assets]
     if: always()
     runs-on: ubuntu-24.04
     timeout-minutes: 5
@@ -303,6 +317,10 @@ jobs:
           RELEASE_BUILD_NUMBER: ${{ needs.build.outputs.build_number || inputs.build_number }}
           RELEASE_REF: ${{ inputs.ref }}
           RELEASE_SOURCE_SHA: ${{ needs.build.outputs.source_sha }}
+          RELEASE_ARCHIVE_RESULT: ${{ needs.release_assets.result }}
+          RELEASE_TAG_URL: ${{ needs.release_assets.outputs.release_url }}
+          RELEASE_TAG_AAB_URL: ${{ needs.release_assets.outputs.aab_url }}
+          RELEASE_TAG_APK_URL: ${{ needs.release_assets.outputs.apk_url }}
           RELEASE_SUBMIT: ${{ inputs.submit }}
           RELEASE_PUBLISH_APK: ${{ inputs.publish_apk }}
           RELEASE_AAB_URL: ${{ needs.build.outputs.aab_url }}
