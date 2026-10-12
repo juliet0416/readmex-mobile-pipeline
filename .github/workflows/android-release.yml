@@ -1,5 +1,5 @@
 name: Android Release
-run-name: Android ${{ inputs.artifact_type == 'both' && 'AAB + APK' || inputs.artifact_type == 'apk' && 'APK' || 'AAB' }} · ${{ inputs.version }} (${{ inputs.build_number }}) · ${{ inputs.ref }}
+run-name: Android ${{ inputs.artifact_type == 'both' && 'AAB + APK' || inputs.artifact_type == 'apk' && 'APK' || 'AAB' }} · ${{ inputs.version }} (${{ inputs.build_number || '自动' }}) · ${{ inputs.ref }}
 
 on:
   workflow_dispatch:
@@ -11,8 +11,8 @@ on:
         description: App version, for example 1.0.0
         required: true
       build_number:
-        description: Increasing Android versionCode
-        required: true
+        description: Optional versionCode override; empty resolves the next build automatically
+        required: false
       expected_source_sha:
         description: Optional source SHA to verify after checkout
         required: false
@@ -46,6 +46,7 @@ on:
 
 permissions:
   contents: read
+  actions: read
 
 concurrency:
   group: readmex-android-release
@@ -56,13 +57,13 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     outputs:
+      build_number: ${{ steps.number.outputs.build_number }}
       source_sha: ${{ steps.source.outputs.sha }}
       aab_url: ${{ steps.aab.outputs.artifact-url }}
       apk_url: ${{ steps.apk.outputs.artifact-url }}
       page_size_result: ${{ steps.verify.outcome }}
     env:
       APP_VERSION: ${{ inputs.version }}
-      APP_BUILD_NUMBER: ${{ inputs.build_number }}
       ARTIFACT_TYPE: ${{ inputs.artifact_type }}
     steps:
       - uses: actions/checkout@v4
@@ -97,6 +98,14 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22.16.0'
+      - name: Resolve release build number
+        id: number
+        env:
+          BUILD_NUMBER_OVERRIDE: ${{ inputs.build_number }}
+          GOOGLE_PLAY_SERVICE_ACCOUNT_JSON_BASE64: ${{ secrets.GOOGLE_PLAY_SERVICE_ACCOUNT_JSON_BASE64 }}
+          APP_PACKAGE_ID: ${{ vars.APP_PACKAGE_ID }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: node scripts/resolve-build-number.mjs android source/mobile-app
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -167,7 +176,7 @@ jobs:
         id: aab
         uses: actions/upload-artifact@v4
         with:
-          name: android-aab-${{ inputs.version }}-${{ inputs.build_number }}
+          name: android-aab-${{ inputs.version }}-${{ steps.number.outputs.build_number }}
           path: ${{ runner.temp }}/artifacts/*.aab
           if-no-files-found: error
           retention-days: 14
@@ -176,7 +185,7 @@ jobs:
         id: apk
         uses: actions/upload-artifact@v4
         with:
-          name: android-apk-${{ inputs.version }}-${{ inputs.build_number }}
+          name: android-apk-${{ inputs.version }}-${{ steps.number.outputs.build_number }}
           path: ${{ runner.temp }}/artifacts/*.apk
           if-no-files-found: error
           retention-days: 14
@@ -196,7 +205,7 @@ jobs:
           node-version: '22.16.0'
       - uses: actions/download-artifact@v4
         with:
-          name: android-aab-${{ inputs.version }}-${{ inputs.build_number }}
+          name: android-aab-${{ inputs.version }}-${{ needs.build.outputs.build_number || inputs.build_number }}
           path: ${{ runner.temp }}/artifacts
       - name: Decode Google Play credentials
         id: account
@@ -231,10 +240,10 @@ jobs:
           PLAY_SERVICE_ACCOUNT_FILE: ${{ steps.account.outputs.json_path }}
           APP_PACKAGE_ID: ${{ vars.APP_PACKAGE_ID }}
           PLAY_EDIT_ID: ${{ steps.play_edit.outputs.edit_id }}
-          APP_BUILD_NUMBER: ${{ inputs.build_number }}
+          APP_BUILD_NUMBER: ${{ needs.build.outputs.build_number || inputs.build_number }}
           PLAY_TRACK: ${{ inputs.track }}
           PLAY_RELEASE_STATUS: ${{ inputs.release_status }}
-          PLAY_AAB_FILE: ${{ runner.temp }}/artifacts/readmex-${{ inputs.version }}-${{ inputs.build_number }}.aab
+          PLAY_AAB_FILE: ${{ runner.temp }}/artifacts/readmex-${{ inputs.version }}-${{ needs.build.outputs.build_number || inputs.build_number }}.aab
         run: node scripts/google-play.mjs recover
       - name: Cleanup Play credentials
         if: always()
@@ -252,7 +261,7 @@ jobs:
           node-version: '22.16.0'
       - uses: actions/download-artifact@v4
         with:
-          name: android-apk-${{ inputs.version }}-${{ inputs.build_number }}
+          name: android-apk-${{ inputs.version }}-${{ needs.build.outputs.build_number || inputs.build_number }}
           path: ${{ runner.temp }}/artifacts
       - name: Publish APK to R2 and verify public downloads
         id: r2
@@ -263,9 +272,9 @@ jobs:
           R2_BUCKET_NAME: ${{ secrets.R2_BUCKET_NAME || vars.R2_BUCKET_NAME }}
           R2_PUBLIC_BASE_URL: ${{ secrets.R2_PUBLIC_BASE_URL || vars.R2_PUBLIC_BASE_URL }}
           R2_OBJECT_PREFIX: ${{ secrets.R2_OBJECT_PREFIX || vars.R2_OBJECT_PREFIX || 'readmex/app-update' }}
-          R2_SOURCE: ${{ runner.temp }}/artifacts/readmex-${{ inputs.version }}-${{ inputs.build_number }}.apk
+          R2_SOURCE: ${{ runner.temp }}/artifacts/readmex-${{ inputs.version }}-${{ needs.build.outputs.build_number || inputs.build_number }}.apk
           APP_VERSION: ${{ inputs.version }}
-          APP_BUILD_NUMBER: ${{ inputs.build_number }}
+          APP_BUILD_NUMBER: ${{ needs.build.outputs.build_number || inputs.build_number }}
         run: node scripts/upload-r2.mjs
 
   notify:
@@ -282,7 +291,7 @@ jobs:
         env:
           FEISHU_RELEASE_WEBHOOK_URL: ${{ secrets.FEISHU_RELEASE_WEBHOOK_URL }}
           FEISHU_RELEASE_WEBHOOK_SECRET: ${{ secrets.FEISHU_RELEASE_WEBHOOK_SECRET || secrets.FEISHU_RELEASE_WEBHOOK_SECRE }}
-          FEISHU_RELEASE_LANG: ${{ vars.FEISHU_RELEASE_LANG || 'en' }}
+          FEISHU_RELEASE_LANG: ${{ vars.FEISHU_RELEASE_LANG || 'zh' }}
           SOURCE_REPO: ${{ vars.SOURCE_REPO }}
           RELEASE_PLATFORM: android
           RELEASE_ARTIFACT_TYPE: ${{ inputs.artifact_type }}
@@ -291,7 +300,7 @@ jobs:
           PUBLISH_RESULT: ${{ needs.publish.result }}
           PAGE_SIZE_RESULT: ${{ needs.build.outputs.page_size_result }}
           RELEASE_VERSION: ${{ inputs.version }}
-          RELEASE_BUILD_NUMBER: ${{ inputs.build_number }}
+          RELEASE_BUILD_NUMBER: ${{ needs.build.outputs.build_number || inputs.build_number }}
           RELEASE_REF: ${{ inputs.ref }}
           RELEASE_SOURCE_SHA: ${{ needs.build.outputs.source_sha }}
           RELEASE_SUBMIT: ${{ inputs.submit }}

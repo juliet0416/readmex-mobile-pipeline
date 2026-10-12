@@ -53,6 +53,31 @@ export async function verifyPlayAccess(account, packageName, fetchImpl = fetch) 
   return { packageName, access: 'verified' };
 }
 
+export async function highestAndroidBuild(account, packageName, fetchImpl = fetch) {
+  const { url, headers } = await playSession(account, packageName, fetchImpl);
+  const response = await fetchImpl(url, { method: 'POST', headers, body: '{}', signal: AbortSignal.timeout(30000) });
+  const edit = await response.json();
+  if (!response.ok || !edit.id) throw new Error(`Play build lookup edit HTTP ${response.status}`);
+  const editUrl = `${url}/${encodeURIComponent(edit.id)}`;
+  try {
+    const numbers = [];
+    for (const resource of ['bundles', 'tracks']) {
+      const result = await fetchImpl(`${editUrl}/${resource}`, { method: 'GET', headers, signal: AbortSignal.timeout(30000) });
+      if (!result.ok) throw new Error(`Play ${resource} lookup HTTP ${result.status}`);
+      const data = await result.json();
+      const values = resource === 'bundles' ? (data.bundles ?? []).map(bundle => bundle.versionCode) : (data.tracks ?? []).flatMap(track => (track.releases ?? []).flatMap(release => release.versionCodes ?? []));
+      for (const value of values) {
+        if (!/^[1-9]\d*$/.test(String(value)) || !Number.isSafeInteger(Number(value))) throw new Error('Invalid Play build number');
+        numbers.push(Number(value));
+      }
+    }
+    return Math.max(0, ...numbers);
+  } finally {
+    const cleanup = await fetchImpl(editUrl, { method: 'DELETE', headers, signal: AbortSignal.timeout(30000) });
+    if (!cleanup.ok) throw new Error(`Play build lookup edit cleanup HTTP ${cleanup.status}`);
+  }
+}
+
 export async function recoverPlayCommit(account, options, fetchImpl = fetch, sleep = ms => new Promise(resolve => setTimeout(resolve, ms))) {
   const { url, headers } = await playSession(account, options.packageName, fetchImpl);
   if (!options.editId || !/^[1-9]\d*$/.test(options.buildNumber) || !/^[a-f0-9]{64}$/.test(options.sha256) || !['internal', 'alpha', 'beta', 'production'].includes(options.track) || !['draft', 'completed'].includes(options.status)) throw new Error('Invalid Play commit recovery inputs');

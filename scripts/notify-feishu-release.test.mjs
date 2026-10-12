@@ -76,4 +76,10 @@ if (existsSync(new URL('./notify-feishu-release.mjs', import.meta.url))) {
       }
     }
   });
+  test('Chinese card distinguishes GitHub artifact, version APK, latest APK and Play draft', () => {
+    const card = buildFeishuCardPayload({ ...input, lang: 'zh', platform: 'android', artifactType: 'both', aabUrl: 'https://example.com/aab', apkUrl: 'https://example.com/apk', publishApk: true, publishResult: 'success', downloadUrl: 'https://example.com/version.apk', latestUrl: 'https://example.com/latest.apk', track: 'internal', releaseStatus: 'draft' });
+    const body = JSON.stringify(card);
+    for (const label of ['APK 构建产物（GitHub）', 'APK 下载（本版本）', 'APK 下载（最新版）', '内部测试', '草稿']) assert.ok(body.includes(label), label);
+    assert.ok(!body.includes('APK download'));
+  });
 }

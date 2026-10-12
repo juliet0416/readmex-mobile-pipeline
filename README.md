@@ -43,7 +43,7 @@ The pinned GTSDK 3.1.2.0 and GTCommonSDK 3.2.6.0 binary frameworks omit the vers
 
 The independent `notify` job runs even when source checkout, signing, archive, export, or submission fails. Its card includes the version, build number, exact source commit, IPA artifact, Actions logs, upload result, and the discovered TestFlight URL. A notification is successful only when HTTP succeeds and Feishu returns code 0. Notification failure is visible in its own job and does not change the IPA artifact.
 
-Configure the signed bot's URL and secret with `FEISHU_RELEASE_WEBHOOK_URL` and `FEISHU_RELEASE_WEBHOOK_SECRET`. The truncated legacy name `FEISHU_RELEASE_WEBHOOK_SECRE` is accepted as a fallback. Never commit webhook values or Apple keys. Optional variable `FEISHU_RELEASE_LANG=zh` selects Chinese; absent or unsupported values default to English.
+Configure the signed bot's URL and secret with `FEISHU_RELEASE_WEBHOOK_URL` and `FEISHU_RELEASE_WEBHOOK_SECRET`. The truncated legacy name `FEISHU_RELEASE_WEBHOOK_SECRE` is accepted as a fallback. Never commit webhook values or Apple keys. Workflow notifications default to Chinese (`FEISHU_RELEASE_LANG=zh`); set `en` explicitly for English. APK links distinguish the GitHub artifact ZIP (repository access, 14-day retention), the public versioned R2 APK, and the fixed latest APK URL. Play track/status copy is translated too.
 
 From the ReadmeX source workspace:
 
@@ -51,11 +51,13 @@ From the ReadmeX source workspace:
 npm run pipeline:release -- --platform ios --ref <pushed-source-SHA> --version 1.0.0 --build-number 2 --submit --watch
 ```
 
-Choose a build number higher than the last uploaded one. `version:update` is separate and is not required to build an existing version. Pipeline version/signing preparation only modifies the disposable CI checkout.
+Omit `--build-number` to resolve the next number in CI from the store, native source and Actions artifact history. An explicit override must be higher than the last upload. `version:update` is separate and is not required to build an existing version. Pipeline version/signing preparation only modifies the disposable CI checkout.
 
 ## Interactive source entry
 
-From the ReadmeX repository, install dependencies with Node.js 22.13+ and run `npm run pipeline:interactive` (or `npm run pipeline:release` without arguments in a terminal). Use arrow keys to select iOS or Android and a source tag; use Space to select Android AAB, APK, or both. The default new `mobile-vX.Y.Z` tag is annotated and pushed from the current clean commit, or select an existing tag to rebuild with a new build number. `--create-tag --version X.Y.Z` provides the same behavior directly. Store submission and R2 publishing are explicit choices; source version updates are independent. Set `READMEX_RELEASE_LANG=zh` for the Chinese menu. `READMEX_PIPELINE_GH_USER` optionally selects a locally authenticated GitHub account without switching the global account. Tag refs remain visible in CI; `expected_source_sha` rejects a source ref that changed after dispatch preflight. Android run names and Feishu titles distinguish AAB, APK, and AAB + APK.
+From the ReadmeX repository, install dependencies with Node.js 22.13+ and run `npm run pipeline:release`. The wizard defaults to Chinese and follows Ottermind: platform → source tag → Android artifacts → store submission → cache clearing → confirmation. Arrow keys choose single options; Space toggles aab/APK with [✓]/[ ] markers. Every later step includes a back row; Enter on that row goes back immediately without selecting it. Custom version input accepts b to go back. Existing answers are preserved when stepping backwards.
+
+The wizard uses internal/draft for Google Play, automatically publishes selected APKs to R2 and watches the run. Build numbers are resolved in CI using the maximum of store uploads, native source and Actions artifacts plus one; API failures stop rather than guessing. The workflows serialize per platform to avoid simultaneous store-number allocation. Explicit CLI flags remain available for track/status, build-number and distribution overrides. The new annotated mobile-vX.Y.Z tag is pushed only after confirmation and from a clean commit; an existing tag can be reused. READMEX_RELEASE_LANG=en selects English. READMEX_PIPELINE_GH_USER selects a locally authenticated account without changing global gh auth; otherwise the logged-in pipeline owner is preferred when no token is supplied. CI keeps tag refs and validates expected_source_sha. Android run names and Feishu titles distinguish AAB, APK, and AAB + APK; an automatic run name shows 自动, while artifact filenames and notifications show the actual resolved number.
 
 ## Android AAB and APK
 

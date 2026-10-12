@@ -23,7 +23,9 @@ export function buildFeishuCardPayload(input) {
   ];
   if (android) {
     const artifact = input.artifactType ?? 'aab';
-    if (artifact !== 'apk') fields.push(field(copy.aab, input.aabUrl ? link(`readmex-${input.version}-${input.buildNumber}.aab`, input.aabUrl) : ''), field(copy.play, `${link(uploadState, input.submitResult === 'success' ? input.playUrl : '')}${input.submit && input.track ? `\n${input.track} · ${input.releaseStatus}` : ''}`));
+    const trackLabel = { internal: copy.trackInternal, alpha: copy.trackAlpha, beta: copy.trackBeta, production: copy.trackProduction }[input.track] ?? input.track;
+    const statusLabel = { draft: copy.statusDraft, completed: copy.statusCompleted }[input.releaseStatus] ?? input.releaseStatus;
+    if (artifact !== 'apk') fields.push(field(copy.aab, input.aabUrl ? link(`readmex-${input.version}-${input.buildNumber}.aab`, input.aabUrl) : ''), field(copy.play, `${link(uploadState, input.submitResult === 'success' ? input.playUrl : '')}${input.submit && input.track ? `\n${trackLabel} · ${statusLabel}` : ''}`));
     if (artifact !== 'aab') {
       fields.push(field(copy.apk, input.apkUrl ? link(`readmex-${input.version}-${input.buildNumber}.apk`, input.apkUrl) : ''), field(copy.r2, state(input.publishApk, input.publishResult, copy.r2Uploaded)));
       if (input.publishResult === 'success') {

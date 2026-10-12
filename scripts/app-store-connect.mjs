@@ -17,6 +17,32 @@ export async function requestAsc(endpoint, env = process.env, fetchImpl = fetch)
   if (!response.ok) throw new Error(`ASC HTTP ${response.status}: ${(data.errors ?? []).map(e => e.code).join(', ')}`);
   return data;
 }
+
+export async function highestIosBuild(env = process.env, fetchImpl = fetch) {
+  const apps = await requestAsc(`/v1/apps?${new URLSearchParams({ 'filter[bundleId]': env.IOS_APP_BUNDLE_ID, limit: '2' })}`, env, fetchImpl);
+  if (apps.data?.length !== 1) throw new Error(`Expected one ASC app for ${env.IOS_APP_BUNDLE_ID}`);
+  let endpoint = `/v1/builds?${new URLSearchParams({ 'filter[app]': apps.data[0].id, limit: '200' })}`;
+  let highest = 0;
+  const visited = new Set();
+  while (endpoint) {
+    if (visited.has(endpoint) || visited.size >= 100) throw new Error('Invalid ASC pagination');
+    visited.add(endpoint);
+    const data = await requestAsc(endpoint, env, fetchImpl);
+    if (!Array.isArray(data.data)) throw new Error('Invalid ASC builds response');
+    for (const build of data.data) {
+      const value = String(build.attributes?.version);
+      if (!/^[1-9]\d*$/.test(value) || !Number.isSafeInteger(Number(value))) throw new Error('Non-integer ASC build number; use --build-number explicitly');
+      highest = Math.max(highest, Number(value));
+    }
+    endpoint = null;
+    if (data.links?.next) {
+      const next = new URL(data.links.next, 'https://api.appstoreconnect.apple.com');
+      if (next.origin !== 'https://api.appstoreconnect.apple.com' || next.pathname !== '/v1/builds') throw new Error('Invalid ASC pagination URL');
+      endpoint = `${next.pathname}${next.search}`;
+    }
+  }
+  return highest;
+}
 //#endregion
 
 async function main() {

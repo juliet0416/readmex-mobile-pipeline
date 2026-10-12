@@ -1,5 +1,5 @@
 name: iOS Release
-run-name: iOS ${{ inputs.version }} (${{ inputs.build_number }}) · ${{ inputs.ref }}
+run-name: iOS ${{ inputs.version }} (${{ inputs.build_number || '自动' }}) · ${{ inputs.ref }}
 
 on:
   workflow_dispatch:
@@ -11,8 +11,8 @@ on:
         description: Semver, for example 1.0.0
         required: true
       build_number:
-        description: Monotonically increasing CFBundleVersion
-        required: true
+        description: Optional CFBundleVersion override; empty resolves the next build automatically
+        required: false
       expected_source_sha:
         description: Optional source SHA to verify after checkout
         required: false
@@ -27,6 +27,11 @@ on:
 
 permissions:
   contents: read
+  actions: read
+
+concurrency:
+  group: readmex-ios-release
+  cancel-in-progress: false
 
 jobs:
   build:
@@ -36,6 +41,7 @@ jobs:
       build_result: ${{ steps.export.outcome }}
       submit_result: ${{ steps.asc.outcome == 'failure' && 'failure' || steps.submit.outcome }}
       processing_result: ${{ steps.verify.outputs.processing_result }}
+      build_number: ${{ steps.number.outputs.build_number }}
       source_sha: ${{ steps.source.outputs.sha }}
       artifact_url: ${{ steps.artifact.outputs.artifact-url }}
       testflight_url: ${{ steps.asc.outputs.testflight_url }}
@@ -69,6 +75,15 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22.16.0'
+      - name: Resolve release build number
+        id: number
+        env:
+          BUILD_NUMBER_OVERRIDE: ${{ inputs.build_number }}
+          ASC_API_KEY_P8_BASE64: ${{ secrets.ASC_API_KEY_P8_BASE64 }}
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: node scripts/resolve-build-number.mjs ios source/mobile-app
       - name: Install mobile dependencies
         working-directory: source/mobile-app
         run: npm ci
@@ -86,7 +101,7 @@ jobs:
       - name: Prepare iOS release
         env:
           APP_VERSION: ${{ inputs.version }}
-          APP_BUILD_NUMBER: ${{ inputs.build_number }}
+          APP_BUILD_NUMBER: ${{ steps.number.outputs.build_number }}
         run: node scripts/prepare-ios.mjs source/mobile-app
       - name: Archive
         working-directory: source/mobile-app/ios/App
@@ -132,7 +147,7 @@ jobs:
         id: artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ios-release-${{ inputs.version }}-${{ inputs.build_number }}
+          name: ios-release-${{ inputs.version }}-${{ steps.number.outputs.build_number }}
           path: ${{ runner.temp }}/export/*.ipa
           if-no-files-found: error
           retention-days: 14
@@ -171,7 +186,7 @@ jobs:
           ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
           ASC_APP_ID: ${{ steps.asc.outputs.app_id }}
           APP_VERSION: ${{ inputs.version }}
-          APP_BUILD_NUMBER: ${{ inputs.build_number }}
+          APP_BUILD_NUMBER: ${{ steps.number.outputs.build_number }}
         run: node scripts/app-store-connect.mjs verify
       - name: Cleanup signing material
         if: always()
@@ -199,13 +214,13 @@ jobs:
         env:
           FEISHU_RELEASE_WEBHOOK_URL: ${{ secrets.FEISHU_RELEASE_WEBHOOK_URL }}
           FEISHU_RELEASE_WEBHOOK_SECRET: ${{ secrets.FEISHU_RELEASE_WEBHOOK_SECRET || secrets.FEISHU_RELEASE_WEBHOOK_SECRE }}
-          FEISHU_RELEASE_LANG: ${{ vars.FEISHU_RELEASE_LANG || 'en' }}
+          FEISHU_RELEASE_LANG: ${{ vars.FEISHU_RELEASE_LANG || 'zh' }}
           SOURCE_REPO: ${{ vars.SOURCE_REPO }}
           BUILD_RESULT: ${{ needs.build.outputs.build_result == 'success' && 'success' || needs.build.result }}
           SUBMIT_RESULT: ${{ needs.build.outputs.submit_result }}
           PROCESSING_RESULT: ${{ needs.build.outputs.processing_result }}
           RELEASE_VERSION: ${{ inputs.version }}
-          RELEASE_BUILD_NUMBER: ${{ inputs.build_number }}
+          RELEASE_BUILD_NUMBER: ${{ needs.build.outputs.build_number || inputs.build_number }}
           RELEASE_REF: ${{ inputs.ref }}
           RELEASE_SOURCE_SHA: ${{ needs.build.outputs.source_sha }}
           RELEASE_SUBMIT: ${{ inputs.submit }}
