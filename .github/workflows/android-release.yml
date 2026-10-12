@@ -1,0 +1,93 @@
+name: Android Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Source commit or tag
+        required: true
+      version:
+        description: Semver, for example 1.0.0
+        required: true
+      build_number:
+        description: Monotonically increasing versionCode
+        required: true
+      submit:
+        description: Upload the signed AAB to the selected Play track
+        type: boolean
+        default: false
+      track:
+        description: Play track
+        type: choice
+        options: [internal, beta, production]
+        default: internal
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    env:
+      SOURCE_REPO: ${{ vars.SOURCE_REPO }}
+      APP_PACKAGE_ID: ${{ vars.APP_PACKAGE_ID }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ vars.SOURCE_REPO }}
+          ref: ${{ inputs.ref }}
+          token: ${{ secrets.SOURCE_REPO_PAT }}
+          path: source
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.16.0'
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Install mobile dependencies
+        working-directory: source/mobile-app
+        run: npm ci
+      - name: Sync native project
+        working-directory: source/mobile-app
+        run: npx cap sync android
+      - name: Prepare Android signing
+        env:
+          APP_VERSION: ${{ inputs.version }}
+          APP_BUILD_NUMBER: ${{ inputs.build_number }}
+        run: |
+          node scripts/configure-android.mjs source/mobile-app
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('source/mobile-app/android/app/build.gradle')
+          s = p.read_text()
+          s = s.replace('versionCode 1', 'versionCode ${{ inputs.build_number }}')
+          s = s.replace('versionName "1.0"', 'versionName "${{ inputs.version }}"')
+          p.write_text(s)
+          PY
+      - name: Restore upload keystore
+        run: |
+          printf '%s' '${{ secrets.ANDROID_KEYSTORE_BASE64 }}' | base64 --decode > source/mobile-app/android/app/ci-upload.keystore
+      - name: Build signed AAB
+        working-directory: source/mobile-app/android
+        env:
+          ORG_GRADLE_PROJECT_CI_UPLOAD_STORE_FILE: ci-upload.keystore
+          ORG_GRADLE_PROJECT_CI_UPLOAD_STORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ORG_GRADLE_PROJECT_CI_UPLOAD_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ORG_GRADLE_PROJECT_CI_UPLOAD_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: ./gradlew bundleRelease --no-daemon --stacktrace
+      - name: Upload AAB artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-release-${{ inputs.version }}-${{ inputs.build_number }}
+          path: source/mobile-app/android/app/build/outputs/bundle/release/*.aab
+      - name: Upload to Play
+        if: inputs.submit
+        uses: r0adkll/upload-google-play@v1
+        with:
+          serviceAccountJsonPlainText: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON }}
+          packageName: ${{ vars.APP_PACKAGE_ID }}
+          releaseFiles: source/mobile-app/android/app/build/outputs/bundle/release/*.aab
+          track: ${{ inputs.track }}
