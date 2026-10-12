@@ -7,11 +7,11 @@ import { pathToFileURL } from 'node:url';
 //#region github-api-and-provenance
 function client(token, fetchImpl = fetch) {
   if (!token) throw new Error('Missing GitHub token');
-  return async (path, { method = 'GET', body, binary = false, raw = false, optional = false } = {}) => {
+  return async (path, { method = 'GET', body, binary = false, raw = false, optional = false, accept = 'application/vnd.github+json' } = {}) => {
     const url = new URL(path, 'https://api.github.com');
     if (!['api.github.com', 'uploads.github.com'].includes(url.hostname) || url.protocol !== 'https:') throw new Error('Unexpected GitHub API host');
     const response = await fetchImpl(url.href, {
-      method, headers: { Authorization: `Bearer ${token}`, Accept: raw ? 'application/octet-stream' : 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28', ...(body ? { 'Content-Type': binary ? 'application/octet-stream' : 'application/json' } : {}) },
+      method, headers: { Authorization: `Bearer ${token}`, Accept: accept, 'X-GitHub-Api-Version': '2022-11-28', ...(body ? { 'Content-Type': binary ? 'application/octet-stream' : 'application/json' } : {}) },
       ...(body ? { body: binary ? body : JSON.stringify(body) } : {}), signal: AbortSignal.timeout(120000),
     });
     if (optional && response.status === 404) return null;
@@ -65,7 +65,7 @@ function selectedArtifacts(options) {
 
 async function verifyAsset(api, options, asset, file) {
   if (asset.name !== file.name || asset.size !== file.bytes.length || asset.state !== 'uploaded') throw new Error(`Release asset mismatch: ${file.name}`);
-  const digest = asset.digest || `sha256:${createHash('sha256').update(await api(`/repos/${options.sourceRepo}/releases/assets/${asset.id}`, { raw: true })).digest('hex')}`;
+  const digest = asset.digest || `sha256:${createHash('sha256').update(await api(`/repos/${options.sourceRepo}/releases/assets/${asset.id}`, { raw: true, accept: 'application/octet-stream' })).digest('hex')}`;
   if (digest !== file.digest) throw new Error(`Release asset digest mismatch: ${file.name}`);
 }
 

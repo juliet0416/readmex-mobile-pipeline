@@ -93,7 +93,7 @@ if (existsSync(file)) {
   test('historical artifact provenance requires matching source and successful verification', async () => {
     const log = `RELEASE_REF: mobile-v1.0.0\nRELEASE_VERSION: 1.0.0\nRELEASE_BUILD_NUMBER: 8\nRELEASE_SOURCE_SHA: ${sha}\n`;
     const jobs = { jobs: [{ id: 1, name: 'build', steps: [{ name: 'Verify signing and 16 KB compatibility', conclusion: 'success' }, { name: 'Save AAB artifact', conclusion: 'success' }, { name: 'Save APK artifact', conclusion: 'success' }] }, { id: 2, name: 'notify' }] };
-    const fetchImpl = async url => new URL(url).pathname.endsWith('/jobs') ? new Response(JSON.stringify(jobs)) : new Response(log);
+    const fetchImpl = async (url, init) => new URL(url).pathname.endsWith('/jobs') ? new Response(JSON.stringify(jobs)) : init.headers.Accept === 'application/vnd.github+json' ? new Response(log) : new Response('Unsupported Media Type', { status: 415 });
     await verifyHistoricalArtifacts({ ...options, artifactRunId: '123', currentRunId: '456', pipelineRepo: 'juliet0416/readmex-mobile-pipeline', pipelineToken: 'fixture', fetchImpl });
     await assert.rejects(verifyHistoricalArtifacts({ ...options, sourceSha: 'c'.repeat(40), artifactRunId: '123', currentRunId: '456', pipelineRepo: 'juliet0416/readmex-mobile-pipeline', pipelineToken: 'fixture', fetchImpl }), /provenance.*mismatch/i);
     jobs.jobs[0].steps[0].conclusion = 'failure';
