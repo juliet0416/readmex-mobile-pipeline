@@ -10,7 +10,7 @@ require_env IOS_CERT_PASSWORD
 require_env IOS_KEYCHAIN_PASSWORD
 require_env IOS_PROFILE_APP_BASE64
 
-mkdir -p .private "$HOME/Library/MobileDevice/Provisioning Profiles"
+mkdir -p .private "$HOME/Library/MobileDevice/Provisioning Profiles" "$HOME/Library/Developer/Xcode/UserData/Provisioning Profiles"
 printf '%s' "$IOS_DISTRIBUTION_CERT_BASE64" | base64 --decode > .private/distribution.p12
 printf '%s' "$IOS_PROFILE_APP_BASE64" | base64 --decode > .private/app.mobileprovision
 
@@ -28,7 +28,9 @@ security cms -D -i .private/app.mobileprovision > "$PROFILE_PLIST"
 PROFILE_UUID=$(/usr/libexec/PlistBuddy -c 'Print UUID' "$PROFILE_PLIST")
 PROFILE_NAME=$(/usr/libexec/PlistBuddy -c 'Print Name' "$PROFILE_PLIST")
 cp .private/app.mobileprovision "$HOME/Library/MobileDevice/Provisioning Profiles/${PROFILE_UUID}.mobileprovision"
+cp .private/app.mobileprovision "$HOME/Library/Developer/Xcode/UserData/Provisioning Profiles/${PROFILE_UUID}.mobileprovision"
 
 echo "keychain_path=$KEYCHAIN_PATH" >> "$GITHUB_OUTPUT"
 echo "profile_name=$PROFILE_NAME" >> "$GITHUB_OUTPUT"
+echo "profile_uuid=$PROFILE_UUID" >> "$GITHUB_OUTPUT"
 echo "[prepare] iOS signing material installed"

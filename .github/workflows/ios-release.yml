@@ -1,4 +1,5 @@
 name: iOS Release
+run-name: iOS ${{ inputs.version }} (${{ inputs.build_number }}) · ${{ inputs.ref }}
 
 on:
   workflow_dispatch:
@@ -23,18 +24,34 @@ permissions:
 jobs:
   build:
     runs-on: macos-15
+    timeout-minutes: 60
+    outputs:
+      build_result: ${{ steps.export.outcome }}
+      submit_result: ${{ steps.asc.outcome == 'failure' && 'failure' || steps.submit.outcome }}
+      processing_result: ${{ steps.verify.outputs.processing_result }}
+      source_sha: ${{ steps.source.outputs.sha }}
+      artifact_url: ${{ steps.artifact.outputs.artifact-url }}
+      testflight_url: ${{ steps.asc.outputs.testflight_url }}
     env:
       SOURCE_REPO: ${{ vars.SOURCE_REPO }}
       IOS_APP_BUNDLE_ID: ${{ vars.IOS_APP_BUNDLE_ID }}
       APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
     steps:
       - uses: actions/checkout@v4
+      - name: Select Xcode 26.3
+        run: |
+          sudo xcode-select -s /Applications/Xcode_26.3.app/Contents/Developer
+          xcodebuild -version
+          xcrun --sdk iphoneos --show-sdk-version
       - uses: actions/checkout@v4
         with:
           repository: ${{ vars.SOURCE_REPO }}
           ref: ${{ inputs.ref }}
           token: ${{ secrets.SOURCE_REPO_PAT }}
           path: source
+      - name: Record source commit
+        id: source
+        run: echo "sha=$(git -C source rev-parse HEAD)" >> "$GITHUB_OUTPUT"
       - uses: actions/setup-node@v4
         with:
           node-version: '22.16.0'
@@ -73,6 +90,7 @@ jobs:
             CODE_SIGN_IDENTITY='Apple Distribution' \
             PROVISIONING_PROFILE_SPECIFIER="$PROFILE_NAME"
       - name: Export IPA
+        id: export
         env:
           PROFILE_NAME: ${{ steps.signing.outputs.profile_name }}
         run: |
@@ -80,7 +98,7 @@ jobs:
           <?xml version="1.0" encoding="UTF-8"?>
           <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
           <plist version="1.0"><dict>
-            <key>method</key><string>app-store</string>
+            <key>method</key><string>app-store-connect</string>
             <key>signingStyle</key><string>manual</string>
             <key>teamID</key><string>${APPLE_TEAM_ID}</string>
             <key>provisioningProfiles</key><dict><key>${IOS_APP_BUNDLE_ID}</key><string>${PROFILE_NAME}</string></dict>
@@ -91,7 +109,87 @@ jobs:
             -exportPath "$RUNNER_TEMP/export" \
             -exportOptionsPlist "$RUNNER_TEMP/ExportOptions.plist"
       - name: Upload IPA artifact
+        id: artifact
         uses: actions/upload-artifact@v4
         with:
           name: ios-release-${{ inputs.version }}-${{ inputs.build_number }}
           path: ${{ runner.temp }}/export/*.ipa
+          if-no-files-found: error
+          retention-days: 14
+      - name: Verify App Store Connect access
+        if: inputs.submit
+        id: asc
+        env:
+          ASC_API_KEY_P8_BASE64: ${{ secrets.ASC_API_KEY_P8_BASE64 }}
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+        run: node scripts/app-store-connect.mjs preflight
+      - name: Upload IPA to TestFlight
+        if: inputs.submit
+        id: submit
+        timeout-minutes: 15
+        env:
+          ASC_API_KEY_P8_BASE64: ${{ secrets.ASC_API_KEY_P8_BASE64 }}
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          API_PRIVATE_KEYS_DIR: ${{ runner.temp }}/asc-private-keys
+        run: |
+          set -euo pipefail
+          mkdir -p "$API_PRIVATE_KEYS_DIR"
+          printf '%s' "$ASC_API_KEY_P8_BASE64" | base64 --decode > "$API_PRIVATE_KEYS_DIR/AuthKey_${ASC_KEY_ID}.p8"
+          chmod 600 "$API_PRIVATE_KEYS_DIR/AuthKey_${ASC_KEY_ID}.p8"
+          ipa=$(find "$RUNNER_TEMP/export" -maxdepth 1 -name '*.ipa' -print -quit)
+          test -n "$ipa"
+          xcrun altool --upload-package "$ipa" --api-key "$ASC_KEY_ID" --api-issuer "$ASC_ISSUER_ID"
+      - name: Verify Apple processing
+        if: inputs.submit
+        id: verify
+        timeout-minutes: 12
+        env:
+          ASC_API_KEY_P8_BASE64: ${{ secrets.ASC_API_KEY_P8_BASE64 }}
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_APP_ID: ${{ steps.asc.outputs.app_id }}
+          APP_VERSION: ${{ inputs.version }}
+          APP_BUILD_NUMBER: ${{ inputs.build_number }}
+        run: node scripts/app-store-connect.mjs verify
+      - name: Cleanup signing material
+        if: always()
+        run: |
+          rm -rf .private "$RUNNER_TEMP/asc-private-keys"
+          security delete-keychain "$RUNNER_TEMP/mobile-signing.keychain-db" || true
+          if [ -n "${PROFILE_UUID:-}" ]; then
+            rm -f "$HOME/Library/MobileDevice/Provisioning Profiles/$PROFILE_UUID.mobileprovision"
+            rm -f "$HOME/Library/Developer/Xcode/UserData/Provisioning Profiles/$PROFILE_UUID.mobileprovision"
+          fi
+        env:
+          PROFILE_UUID: ${{ steps.signing.outputs.profile_uuid }}
+
+  notify:
+    needs: build
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.16.0'
+      - name: Notify Feishu release bot
+        env:
+          FEISHU_RELEASE_WEBHOOK_URL: ${{ secrets.FEISHU_RELEASE_WEBHOOK_URL }}
+          FEISHU_RELEASE_WEBHOOK_SECRET: ${{ secrets.FEISHU_RELEASE_WEBHOOK_SECRET || secrets.FEISHU_RELEASE_WEBHOOK_SECRE }}
+          FEISHU_RELEASE_LANG: ${{ vars.FEISHU_RELEASE_LANG || 'en' }}
+          SOURCE_REPO: ${{ vars.SOURCE_REPO }}
+          BUILD_RESULT: ${{ needs.build.outputs.build_result == 'success' && 'success' || needs.build.result }}
+          SUBMIT_RESULT: ${{ needs.build.outputs.submit_result }}
+          PROCESSING_RESULT: ${{ needs.build.outputs.processing_result }}
+          RELEASE_VERSION: ${{ inputs.version }}
+          RELEASE_BUILD_NUMBER: ${{ inputs.build_number }}
+          RELEASE_REF: ${{ inputs.ref }}
+          RELEASE_SOURCE_SHA: ${{ needs.build.outputs.source_sha }}
+          RELEASE_SUBMIT: ${{ inputs.submit }}
+          RELEASE_ARTIFACT_URL: ${{ needs.build.outputs.artifact_url }}
+          RELEASE_TESTFLIGHT_URL: ${{ needs.build.outputs.testflight_url }}
+          GITHUB_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: node scripts/notify-feishu-release.mjs
