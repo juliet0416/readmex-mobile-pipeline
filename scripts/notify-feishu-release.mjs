@@ -7,7 +7,7 @@ import { releaseCopy } from './locales/release.mjs';
 export function buildFeishuCardPayload(input) {
   const copy = releaseCopy(input.lang);
   const built = input.buildResult === 'success';
-  const failed = !built || (input.submit && input.submitResult !== 'success') || input.processingResult === 'INVALID';
+  const failed = !built || (input.submit && input.submitResult !== 'success') || ['INVALID', 'FAILED'].includes(input.processingResult);
   const title = input.connectivity ? copy.connectivity : built ? copy.titleSuccess : input.buildResult === 'cancelled' ? copy.titleCancelled : copy.titleFailure;
   const field = (label, value) => ({ is_short: true, text: { tag: 'lark_md', content: `**${label}**\n${value || '—'}` } });
   const link = (label, url) => url ? `[${label}](${url})` : label;
@@ -17,7 +17,7 @@ export function buildFeishuCardPayload(input) {
     field(copy.source, input.ref ? link(input.ref, `https://github.com/${input.sourceRepo}/commit/${encodeURIComponent(input.sourceSha || input.ref)}`) : ''),
     field(copy.ipa, input.artifactUrl ? link(`ios-release-${input.version}-${input.buildNumber}`, input.artifactUrl) : ''),
     field(copy.testflight, link(uploadState, input.testflightUrl)),
-    field(copy.processing, input.processingResult === 'VALID' ? copy.valid : input.processingResult === 'INVALID' ? copy.invalid : copy.pending),
+    field(copy.processing, input.submitResult !== 'success' ? copy.blocked : input.processingResult === 'VALID' ? copy.valid : ['INVALID', 'FAILED'].includes(input.processingResult) ? copy.invalid : copy.pending),
     field(copy.logs, input.runUrl ? link('GitHub Actions', input.runUrl) : ''),
   ];
   return { msg_type: 'interactive', card: { config: { wide_screen_mode: true }, header: { template: input.connectivity || !failed ? 'green' : 'red', title: { tag: 'plain_text', content: title } }, elements: [{ tag: 'div', fields }] } };

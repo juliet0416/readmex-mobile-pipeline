@@ -39,6 +39,8 @@ Workflows build artifacts first. Store submission is disabled by default and req
 
 The iOS workflow selects Xcode 26.3, creates a signed IPA, and preserves it as a 14-day Actions artifact. With `submit=true`, it authenticates with App Store Connect, resolves the app by `IOS_APP_BUNDLE_ID`, uploads the IPA, and checks Apple's processing state for up to 10 minutes. An accepted upload can still be processing; it does not publish an App Store release or submit a review.
 
+The pinned GTSDK 3.1.2.0 and GTCommonSDK 3.2.6.0 binary frameworks omit the version key required by Apple. Before export, the workflow fills only the missing vendor version metadata, signs the modified frameworks and containing app, and verifies the signatures. It rejects changed SDK pins. Upload success requires an explicit positive Apple receipt; an altool exit code of 0 alone is insufficient.
+
 The independent `notify` job runs even when source checkout, signing, archive, export, or submission fails. Its card includes the version, build number, exact source commit, IPA artifact, Actions logs, upload result, and the discovered TestFlight URL. A notification is successful only when HTTP succeeds and Feishu returns code 0. Notification failure is visible in its own job and does not change the IPA artifact.
 
 Configure the signed bot's URL and secret with `FEISHU_RELEASE_WEBHOOK_URL` and `FEISHU_RELEASE_WEBHOOK_SECRET`. The truncated legacy name `FEISHU_RELEASE_WEBHOOK_SECRE` is accepted as a fallback. Never commit webhook values or Apple keys. Optional variable `FEISHU_RELEASE_LANG=zh` selects Chinese; absent or unsupported values default to English.

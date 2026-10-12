@@ -89,6 +89,8 @@ jobs:
             DEVELOPMENT_TEAM="$APPLE_TEAM_ID" \
             CODE_SIGN_IDENTITY='Apple Distribution' \
             PROVISIONING_PROFILE_SPECIFIER="$PROFILE_NAME"
+      - name: Repair pinned Getui framework metadata
+        run: python3 scripts/repair-getui-metadata.py "$RUNNER_TEMP/App.xcarchive/Products/Applications/App.app" source/mobile-app/plugins/getui/Package.swift
       - name: Export IPA
         id: export
         env:
@@ -140,7 +142,7 @@ jobs:
           chmod 600 "$API_PRIVATE_KEYS_DIR/AuthKey_${ASC_KEY_ID}.p8"
           ipa=$(find "$RUNNER_TEMP/export" -maxdepth 1 -name '*.ipa' -print -quit)
           test -n "$ipa"
-          xcrun altool --upload-package "$ipa" --api-key "$ASC_KEY_ID" --api-issuer "$ASC_ISSUER_ID"
+          node scripts/upload-testflight.mjs "$ipa"
       - name: Verify Apple processing
         if: inputs.submit
         id: verify
