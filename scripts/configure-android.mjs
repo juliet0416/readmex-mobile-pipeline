@@ -1,40 +1,45 @@
-import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { readFileSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 
-const appRoot = resolve(process.argv[2]);
-if (!appRoot) throw new Error('mobile app path is required');
-
-const gradlePath = join(appRoot, 'android/app/build.gradle');
+//#region validated-version-and-signing
+const version = process.env.APP_VERSION;
+const build = process.env.APP_BUILD_NUMBER;
+if (!/^\d+\.\d+\.\d+$/.test(version ?? '')) throw new Error('APP_VERSION must be a semantic version');
+if (!/^[1-9]\d*$/.test(build ?? '') || !Number.isSafeInteger(Number(build)) || Number(build) > 2100000000) throw new Error('Invalid Android build number');
+if (!process.argv[2]) throw new Error('mobile app path is required');
+const gradlePath = join(resolve(process.argv[2]), 'android/app/build.gradle');
 let gradle = readFileSync(gradlePath, 'utf8');
-
-if (!gradle.includes('CI_UPLOAD_STORE_FILE')) {
-  const signingBlock = `    signingConfigs {\n        debug {\n            storeFile file('debug.keystore')\n            storePassword 'android'\n            keyAlias 'androiddebugkey'\n            keyPassword 'android'\n        }\n        release {\n            def required = ['CI_UPLOAD_STORE_FILE', 'CI_UPLOAD_STORE_PASSWORD', 'CI_UPLOAD_KEY_ALIAS', 'CI_UPLOAD_KEY_PASSWORD']\n            required.each { name ->\n                if (!project.hasProperty(name) || project.property(name).toString().trim().isEmpty()) {\n                    throw new GradleException("Missing Android signing property: $name")\n                }\n            }\n            storeFile file(project.property('CI_UPLOAD_STORE_FILE'))\n            storePassword project.property('CI_UPLOAD_STORE_PASSWORD')\n            keyAlias project.property('CI_UPLOAD_KEY_ALIAS')\n            keyPassword project.property('CI_UPLOAD_KEY_PASSWORD')\n        }\n    }\n`;
-  gradle = gradle.replace(/android \{\n/, `android {\n${signingBlock}`);
-}
-gradle = gradle.replace(/(buildTypes \{\n\s*release \{)/, '$1\n            signingConfig signingConfigs.release');
-writeFileSync(gradlePath, gradle);
-
-const getuiGradlePath = join(appRoot, 'plugins/getui/android/build.gradle');
-if (existsSync(getuiGradlePath)) {
-  let getuiGradle = readFileSync(getuiGradlePath, 'utf8');
-  if (!getuiGradle.includes('androidx.appcompat:appcompat')) {
-    getuiGradle = getuiGradle.replace(
-      /dependencies \{\n/,
-      'dependencies {\n    implementation "androidx.appcompat:appcompat:1.7.1"\n',
-    );
-    writeFileSync(getuiGradlePath, getuiGradle);
-  }
-}
-
-const resRoot = join(appRoot, 'android/app/src/main/res');
-const mipmap = join(resRoot, 'mipmap');
-mkdirSync(mipmap, { recursive: true });
-for (const [source, target] of [
-  ['drawable/ic_launcher_background.xml', 'mipmap/ic_launcher_background.xml'],
-  ['drawable-v24/ic_launcher_foreground.xml', 'mipmap/ic_launcher_foreground.xml'],
+for (const [pattern, replacement, name] of [
+  [/\bversionCode\s+\d+/g, `versionCode ${build}`, 'versionCode'],
+  [/\bversionName\s+["'][^"']+["']/g, `versionName "${version}"`, 'versionName'],
 ]) {
-  const sourcePath = join(resRoot, source);
-  if (existsSync(sourcePath)) copyFileSync(sourcePath, join(resRoot, target));
+  if ((gradle.match(pattern) ?? []).length !== 1) throw new Error(`Expected exactly one ${name}`);
+  gradle = gradle.replace(pattern, replacement);
 }
-
-console.log('[prepare] Android release signing and generated icon references prepared');
+if (!gradle.includes('CI_UPLOAD_STORE_FILE')) {
+  if (!/android\s*\{/.test(gradle)) throw new Error('Android Gradle block is missing');
+  const signing = `
+    signingConfigs {
+        release {
+            def required = ['CI_UPLOAD_STORE_FILE', 'CI_UPLOAD_STORE_PASSWORD', 'CI_UPLOAD_KEY_ALIAS', 'CI_UPLOAD_KEY_PASSWORD']
+            required.each { name ->
+                if (!project.hasProperty(name) || project.property(name).toString().trim().isEmpty()) {
+                    throw new GradleException("Missing Android signing property: $name")
+                }
+            }
+            storeFile file(project.property('CI_UPLOAD_STORE_FILE'))
+            storePassword project.property('CI_UPLOAD_STORE_PASSWORD')
+            keyAlias project.property('CI_UPLOAD_KEY_ALIAS')
+            keyPassword project.property('CI_UPLOAD_KEY_PASSWORD')
+        }
+    }
+`;
+  gradle = gradle.replace(/android\s*\{/, `android {${signing}`);
+}
+if (!gradle.includes('signingConfig signingConfigs.release')) {
+  if (!/buildTypes\s*\{\s*release\s*\{/.test(gradle)) throw new Error('Release build type is missing');
+  gradle = gradle.replace(/(buildTypes\s*\{\s*release\s*\{)/, '$1\n            signingConfig signingConfigs.release');
+}
+writeFileSync(gradlePath, gradle);
+console.log(`[prepare] Android ${version} (${build}), release signing configured`);
+//#endregion

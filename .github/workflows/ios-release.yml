@@ -17,6 +17,10 @@ on:
         description: Upload IPA to TestFlight
         type: boolean
         default: false
+      clear_cache:
+        description: Remove runner-local Xcode and SwiftPM build cache before archive
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -78,7 +82,11 @@ jobs:
         working-directory: source/mobile-app/ios/App
         env:
           PROFILE_NAME: ${{ steps.signing.outputs.profile_name }}
+          CLEAR_CACHE: ${{ inputs.clear_cache }}
         run: |
+          if [ "$CLEAR_CACHE" = true ]; then
+            rm -rf "$HOME/Library/Developer/Xcode/DerivedData" "$HOME/Library/Caches/org.swift.swiftpm"
+          fi
           xcodebuild archive \
             -project App.xcodeproj \
             -scheme App \

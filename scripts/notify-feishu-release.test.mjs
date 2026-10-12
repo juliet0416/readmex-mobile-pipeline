@@ -2,9 +2,14 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHmac } from 'node:crypto';
 import { existsSync } from 'node:fs';
+import { catalogs } from './locales/release.mjs';
 
 test('release notification implementation is available', () => {
   assert.ok(existsSync(new URL('./notify-feishu-release.mjs', import.meta.url)));
+});
+test('release catalogs share keys and named placeholders', () => {
+  assert.deepEqual(Object.keys(catalogs.en).sort(), Object.keys(catalogs.zh).sort());
+  for (const key of Object.keys(catalogs.en)) assert.deepEqual(catalogs.en[key].match(/\{\{\w+\}\}/g), catalogs.zh[key].match(/\{\{\w+\}\}/g));
 });
 
 if (existsSync(new URL('./notify-feishu-release.mjs', import.meta.url))) {
@@ -48,5 +53,19 @@ if (existsSync(new URL('./notify-feishu-release.mjs', import.meta.url))) {
   test('successful response verifies both HTTP and Feishu code', async () => {
     const result = await sendFeishuNotification({ webhookUrl: 'https://example.com', secret: 'test', payload: {}, fetchImpl: async () => new Response(JSON.stringify({ code: 0 }), { status: 200 }) });
     assert.deepEqual(result, { status: 200, code: 0 });
+  });
+  test('Android card names both artifact links and Play result without TestFlight', () => {
+    const card = buildFeishuCardPayload({ ...input, platform: 'android', artifactType: 'both', aabUrl: 'https://example.com/aab', apkUrl: 'https://example.com/apk', playUrl: 'https://play.google.com/console', publishApk: true, publishResult: 'success', downloadUrl: 'https://downloads.example.com/readmex.apk' });
+    const body = JSON.stringify(card);
+    for (const text of ['Android', 'AAB', 'APK', 'https://example.com/aab', 'https://example.com/apk', 'https://downloads.example.com/readmex.apk', 'Google Play']) assert.ok(body.includes(text), text);
+    assert.ok(!body.includes('TestFlight'));
+    assert.ok(!body.includes('Apple'));
+    assert.equal(card.card.header.template, 'green');
+  });
+  test('R2 failure shows failed distribution and preserves APK artifact', () => {
+    const card = buildFeishuCardPayload({ ...input, platform: 'android', artifactType: 'apk', submit: false, publishApk: true, publishResult: 'failure', apkUrl: 'https://example.com/apk', downloadUrl: 'https://downloads.example.com/incorrect.apk' });
+    assert.equal(card.card.header.template, 'red');
+    assert.match(JSON.stringify(card), /https:\/\/example.com\/apk/);
+    assert.ok(!JSON.stringify(card).includes('incorrect.apk'));
   });
 }
