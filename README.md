@@ -2,7 +2,7 @@
 
 This repository builds a source mobile application into signed iOS and Android release artifacts.
 
-The source repository is selected through `SOURCE_REPO` and `SOURCE_REPO_PAT`; no application source is copied here. Store credentials and signing material are injected through protected GitHub environments.
+The source repository is selected through `SOURCE_REPO` and `SOURCE_REPO_PAT`; no application source is copied here. Both workflows build the SwiftUI / Kotlin Compose projects under `mobile-app/native`; Capacitor sync and legacy project preparation are removed. Store credentials and signing material are injected through protected GitHub environments.
 
 ## Required repository variables
 
@@ -33,11 +33,30 @@ FEISHU_RELEASE_WEBHOOK_URL
 FEISHU_RELEASE_WEBHOOK_SECRET
 ```
 
+## Native source and SDK configuration
+
+The pushed source ref must contain `mobile-app/native/version.json`, the native iOS generator and Kotlin DSL signing support. Legacy refs fail preflight instead of building an old shell. Both platforms read the shared version/build baseline; CI overrides `APP_VERSION` / `APP_BUILD_NUMBER` without modifying the shared file. `version:update` in the source repository updates only its version.
+
+Generated EN/ZH locale and avatar resources are checked against the shared catalogs using pinned `tsx@4.20.0`; the pipeline does not install Capacitor or the full website dependencies. iOS keeps its fixed SwiftPM revisions. Android runs the checked-in wrapper, JVM tests and lint before producing signed AAB/APK, verifies signatures and 16 KB packaging, and retains R8 mapping separately.
+
+Optional SDK secrets (missing configuration does not block builds or store submission):
+
+```text
+GETUI_IOS_APP_ID
+GETUI_IOS_APP_KEY
+GETUI_IOS_APP_SECRET
+GETUI_ANDROID_APP_ID
+```
+
+Empty configuration explicitly disables push; partial iOS configuration fails. iOS values are written to a disposable, mode-0600 `Config/Local.xcconfig` and removed in `always()` cleanup. Android receives only its client AppID. Never inject the server MasterSecret into a client. Real push delivery remains a separate device acceptance check.
+
+A source and pipeline change must be pushed together before dispatching the new workflows. The default `ref=main` cannot consume local uncommitted files. Source SHA verification, tag archiving, store upload, R2 and notification contracts are retained.
+
 Workflows build artifacts first. Store submission is disabled by default and requires an explicit workflow input.
 
 ## iOS release and notifications
 
-The iOS workflow selects Xcode 26.3, creates a signed IPA, and preserves it as a 14-day Actions artifact. With `submit=true`, it authenticates with App Store Connect, resolves the app by `IOS_APP_BUNDLE_ID`, uploads the IPA, and checks Apple's processing state for up to 10 minutes. An accepted upload can still be processing; it does not publish an App Store release or submit a review.
+The iOS workflow uses macos-26 / Xcode 26.6 and pinned Python 3.12, runs native unit tests, archives `mobile-app/native/ios/ReadmeX.xcodeproj` / scheme `ReadmeX`, and verifies the exported signed IPA and matching dSYM. IPA and symbol/metadata artifacts are retained for 14 days. With `submit=true`, it authenticates with App Store Connect, resolves the app by `IOS_APP_BUNDLE_ID`, uploads the IPA, and checks Apple's processing state for up to 10 minutes. An accepted upload can still be processing; it does not publish an App Store release or submit a review.
 
 The pinned GTSDK 3.1.2.0 and GTCommonSDK 3.2.6.0 binary frameworks omit the version key required by Apple. Before export, the workflow fills only the missing vendor version metadata, signs the modified frameworks and containing app, and verifies the signatures. It rejects changed SDK pins. Upload success requires an explicit positive Apple receipt; an altool exit code of 0 alone is insufficient.
 

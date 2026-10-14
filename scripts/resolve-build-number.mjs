@@ -1,8 +1,8 @@
-import { appendFileSync, readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { appendFileSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 import { decodeServiceAccount, highestAndroidBuild } from './google-play.mjs';
 import { highestIosBuild } from './app-store-connect.mjs';
+import { requireNativeSource } from './native-source.mjs';
 
 //#region build-number-resolution
 export function nextBuildNumber(platform, override, known = []) {
@@ -35,13 +35,11 @@ export async function highestArtifactBuild(platform, env = process.env, fetchImp
 async function main() {
   const platform = process.argv[2];
   const env = process.env;
+  const nativeVersion = requireNativeSource(process.argv[3], platform);
   let number;
   if (env.BUILD_NUMBER_OVERRIDE) number = nextBuildNumber(platform, env.BUILD_NUMBER_OVERRIDE);
   else {
-    const root = process.argv[3];
-    const nativeText = readFileSync(join(root, platform === 'android' ? 'android/app/build.gradle' : 'ios/App/App.xcodeproj/project.pbxproj'), 'utf8');
-    const native = Number((platform === 'android' ? /versionCode\s+(\d+)/ : /CURRENT_PROJECT_VERSION\s*=\s*(\d+);/).exec(nativeText)?.[1]);
-    if (!Number.isSafeInteger(native) || native < 1) throw new Error('Unable to read native build number');
+    const native = nativeVersion.buildNumber;
     const store = platform === 'android' ? await highestAndroidBuild(decodeServiceAccount(env.GOOGLE_PLAY_SERVICE_ACCOUNT_JSON_BASE64), env.APP_PACKAGE_ID) : await highestIosBuild(env);
     const history = await highestArtifactBuild(platform, env);
     number = nextBuildNumber(platform, '', [native, store, history]);

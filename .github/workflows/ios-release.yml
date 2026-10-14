@@ -35,10 +35,10 @@ concurrency:
 
 jobs:
   build:
-    runs-on: macos-15
+    runs-on: macos-26
     timeout-minutes: 60
     outputs:
-      build_result: ${{ steps.export.outcome }}
+      build_result: ${{ steps.artifact.outcome }}
       submit_result: ${{ steps.asc.outcome == 'failure' && 'failure' || steps.submit.outcome }}
       processing_result: ${{ steps.verify.outputs.processing_result }}
       build_number: ${{ steps.number.outputs.build_number }}
@@ -51,9 +51,9 @@ jobs:
       APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
     steps:
       - uses: actions/checkout@v4
-      - name: Select Xcode 26.3
+      - name: Select Xcode 26.6
         run: |
-          sudo xcode-select -s /Applications/Xcode_26.3.app/Contents/Developer
+          sudo xcode-select -s /Applications/Xcode_26.6.app/Contents/Developer
           xcodebuild -version
           xcrun --sdk iphoneos --show-sdk-version
       - uses: actions/checkout@v4
@@ -75,6 +75,9 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22.16.0'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
       - name: Resolve release build number
         id: number
         env:
@@ -84,12 +87,15 @@ jobs:
           ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
           GITHUB_TOKEN: ${{ github.token }}
         run: node scripts/resolve-build-number.mjs ios source/mobile-app
-      - name: Install mobile dependencies
-        working-directory: source/mobile-app
-        run: npm ci
-      - name: Sync native project
-        working-directory: source/mobile-app
-        run: npx cap sync ios
+      - name: Verify native source and resources
+        run: |
+          node scripts/native-source.mjs ios source/mobile-app
+          npm exec --yes --package=tsx@4.20.0 -- tsx source/scripts/mobile-native/sync-locales.ts --check
+      - uses: actions/cache@v4
+        if: ${{ !inputs.clear_cache }}
+        with:
+          path: ${{ runner.temp }}/SourcePackages
+          key: native-ios-swiftpm-26.6-${{ hashFiles('source/mobile-app/native/ios/ReadmeX.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved') }}
       - name: Install signing material
         id: signing
         env:
@@ -102,28 +108,49 @@ jobs:
         env:
           APP_VERSION: ${{ inputs.version }}
           APP_BUILD_NUMBER: ${{ steps.number.outputs.build_number }}
+          GETUI_APP_ID: ${{ secrets.GETUI_IOS_APP_ID }}
+          GETUI_APP_KEY: ${{ secrets.GETUI_IOS_APP_KEY }}
+          GETUI_APP_SECRET: ${{ secrets.GETUI_IOS_APP_SECRET }}
         run: node scripts/prepare-ios.mjs source/mobile-app
+      - name: Select unit test simulator
+        id: simulator
+        run: |
+          python3 - <<'PYCODE'
+          import json, os, subprocess
+          devices=json.loads(subprocess.check_output(['xcrun', 'simctl', 'list', 'devices', 'available', '--json']))['devices']
+          iphones=[d['udid'] for runtime in sorted(devices, reverse=True) if 'iOS-' in runtime for d in devices[runtime] if d.get('isAvailable') and d['name'].startswith('iPhone')]
+          if not iphones: raise RuntimeError('No iPhone simulator is available')
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as output: output.write('udid='+iphones[0]+'\n')
+          PYCODE
+      - name: Test native iOS
+        working-directory: source/mobile-app/native/ios
+        env:
+          SIMULATOR_UDID: ${{ steps.simulator.outputs.udid }}
+        run: |
+          xcodebuild test -project ReadmeX.xcodeproj -scheme ReadmeX \
+            -configuration Debug -destination "platform=iOS Simulator,id=$SIMULATOR_UDID" \
+            -derivedDataPath "$RUNNER_TEMP/NativeTests" \
+            -clonedSourcePackagesDirPath "$RUNNER_TEMP/SourcePackages" -skipPackageUpdates \
+            -only-testing:ReadmeXTests CODE_SIGN_IDENTITY=-
       - name: Archive
-        working-directory: source/mobile-app/ios/App
+        working-directory: source/mobile-app/native/ios
         env:
           PROFILE_NAME: ${{ steps.signing.outputs.profile_name }}
-          CLEAR_CACHE: ${{ inputs.clear_cache }}
         run: |
-          if [ "$CLEAR_CACHE" = true ]; then
-            rm -rf "$HOME/Library/Developer/Xcode/DerivedData" "$HOME/Library/Caches/org.swift.swiftpm"
-          fi
           xcodebuild archive \
-            -project App.xcodeproj \
-            -scheme App \
+            -project ReadmeX.xcodeproj \
+            -scheme ReadmeX \
             -configuration Release \
             -destination 'generic/platform=iOS' \
-            -archivePath "$RUNNER_TEMP/App.xcarchive" \
+            -derivedDataPath "$RUNNER_TEMP/NativeRelease" \
+            -clonedSourcePackagesDirPath "$RUNNER_TEMP/SourcePackages" -skipPackageUpdates \
+            -archivePath "$RUNNER_TEMP/ReadmeX.xcarchive" \
             CODE_SIGN_STYLE=Manual \
             DEVELOPMENT_TEAM="$APPLE_TEAM_ID" \
             CODE_SIGN_IDENTITY='Apple Distribution' \
             PROVISIONING_PROFILE_SPECIFIER="$PROFILE_NAME"
       - name: Repair pinned Getui framework metadata
-        run: python3 scripts/repair-getui-metadata.py "$RUNNER_TEMP/App.xcarchive/Products/Applications/App.app" source/mobile-app/plugins/getui/Package.swift
+        run: python3 scripts/repair-getui-metadata.py "$RUNNER_TEMP/ReadmeX.xcarchive/Products/Applications/ReadmeX.app" source/mobile-app/native/ios/ReadmeX.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved
       - name: Export IPA
         id: export
         env:
@@ -135,14 +162,37 @@ jobs:
           <plist version="1.0"><dict>
             <key>method</key><string>app-store-connect</string>
             <key>signingStyle</key><string>manual</string>
+            <key>manageAppVersionAndBuildNumber</key><false/>
             <key>teamID</key><string>${APPLE_TEAM_ID}</string>
             <key>provisioningProfiles</key><dict><key>${IOS_APP_BUNDLE_ID}</key><string>${PROFILE_NAME}</string></dict>
           </dict></plist>
           PLIST
           xcodebuild -exportArchive \
-            -archivePath "$RUNNER_TEMP/App.xcarchive" \
+            -archivePath "$RUNNER_TEMP/ReadmeX.xcarchive" \
             -exportPath "$RUNNER_TEMP/export" \
             -exportOptionsPlist "$RUNNER_TEMP/ExportOptions.plist"
+      - name: Verify exported native IPA
+        id: verify_ipa
+        env:
+          APP_VERSION: ${{ inputs.version }}
+          APP_BUILD_NUMBER: ${{ steps.number.outputs.build_number }}
+          SOURCE_SHA: ${{ steps.source.outputs.sha }}
+        run: |
+          ipa=$(find "$RUNNER_TEMP/export" -maxdepth 1 -name '*.ipa' -print -quit)
+          test -n "$ipa"
+          ditto -x -k "$ipa" "$RUNNER_TEMP/verified-ipa"
+          python3 scripts/verify-ios-artifact.py "$RUNNER_TEMP/verified-ipa/Payload/ReadmeX.app" "$RUNNER_TEMP/ReadmeX.xcarchive/dSYMs/ReadmeX.app.dSYM" > "$RUNNER_TEMP/native-ios-metadata.json"
+          shasum -a 256 "$ipa" > "$RUNNER_TEMP/ios-sha256.txt"
+      - name: Upload iOS symbols and metadata
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios-symbols-${{ inputs.version }}-${{ steps.number.outputs.build_number }}
+          path: |
+            ${{ runner.temp }}/ReadmeX.xcarchive/dSYMs
+            ${{ runner.temp }}/native-ios-metadata.json
+            ${{ runner.temp }}/ios-sha256.txt
+          if-no-files-found: error
+          retention-days: 14
       - name: Upload IPA artifact
         id: artifact
         uses: actions/upload-artifact@v4
@@ -192,6 +242,7 @@ jobs:
         if: always()
         run: |
           rm -rf .private "$RUNNER_TEMP/asc-private-keys"
+          rm -f source/mobile-app/native/ios/Config/Local.xcconfig
           security delete-keychain "$RUNNER_TEMP/mobile-signing.keychain-db" || true
           if [ -n "${PROFILE_UUID:-}" ]; then
             rm -f "$HOME/Library/MobileDevice/Provisioning Profiles/$PROFILE_UUID.mobileprovision"
