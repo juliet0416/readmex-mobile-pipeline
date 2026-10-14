@@ -15,6 +15,13 @@ def verify_metadata(info, entitlements, profile, env):
               'MinimumOSVersion':'18.0', 'CFBundleSupportedPlatforms':['iPhoneOS']}
     for key,value in expected.items():
         if info.get(key)!=value: raise ValueError(f'Unexpected release {key}')
+    # iPad 多任务必须支持四个方向，在上传前拦截 Apple 90474 错误。
+    if 2 in info.get('UIDeviceFamily',[]) and not info.get('UIRequiresFullScreen',False):
+        orientations=info.get('UISupportedInterfaceOrientations~ipad',info.get('UISupportedInterfaceOrientations',[]))
+        required={'UIInterfaceOrientationPortrait','UIInterfaceOrientationPortraitUpsideDown',
+                  'UIInterfaceOrientationLandscapeLeft','UIInterfaceOrientationLandscapeRight'}
+        if not isinstance(orientations,list) or not required.issubset(orientations):
+            raise ValueError('iPad multitasking requires all four supported orientations (Apple 90474)')
     team=entitlements.get('com.apple.developer.team-identifier')
     if not team or (env.get('APPLE_TEAM_ID') and env['APPLE_TEAM_ID']!=team): raise ValueError('Unexpected signing team')
     if entitlements.get('application-identifier')!=team+'.'+expected['CFBundleIdentifier']: raise ValueError('Unexpected signed app identifier')

@@ -6,6 +6,25 @@ import unittest
 SCRIPT = pathlib.Path(__file__).with_name('verify-ios-artifact.py')
 
 class NativeArtifactTests(unittest.TestCase):
+    def test_ipad_multitasking_orientation_validation(self):
+        spec=importlib.util.spec_from_file_location('verify', SCRIPT)
+        module=importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        portrait='UIInterfaceOrientationPortrait'
+        upside_down='UIInterfaceOrientationPortraitUpsideDown'
+        iphone=[portrait,'UIInterfaceOrientationLandscapeLeft','UIInterfaceOrientationLandscapeRight']
+        ipad=[*iphone,upside_down]
+        info={'CFBundleIdentifier':'ai.readmex.app','CFBundleShortVersionString':'2.1.0','CFBundleVersion':'42','MinimumOSVersion':'18.0','CFBundleSupportedPlatforms':['iPhoneOS'],'UIDeviceFamily':[1,2],'UISupportedInterfaceOrientations':iphone}
+        ent={'application-identifier':'TEAM.ai.readmex.app','com.apple.developer.team-identifier':'TEAM','aps-environment':'production','get-task-allow':False}
+        profile={'TeamIdentifier':['TEAM'],'ExpirationDate':datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)+datetime.timedelta(days=1),'Entitlements':dict(ent)}
+        env={'APP_VERSION':'2.1.0','APP_BUILD_NUMBER':'42','APPLE_TEAM_ID':'TEAM'}
+        for overrides in [{},{'UISupportedInterfaceOrientations~ipad':iphone},{'UISupportedInterfaceOrientations':ipad,'UISupportedInterfaceOrientations~ipad':[]}]:
+            with self.subTest(overrides=overrides), self.assertRaisesRegex(ValueError,'iPad.*orientations'):
+                module.verify_metadata({**info,**overrides},ent,profile,env)
+        for overrides in [{'UISupportedInterfaceOrientations~ipad':ipad},{'UISupportedInterfaceOrientations':ipad},{'UIDeviceFamily':[1]},{'UIRequiresFullScreen':True}]:
+            with self.subTest(overrides=overrides):
+                module.verify_metadata({**info,**overrides},ent,profile,env)
+
     def test_native_verifier_exists(self):
         self.assertTrue(SCRIPT.exists())
 
