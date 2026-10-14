@@ -152,6 +152,14 @@ jobs:
             both) tasks=(:app:bundleRelease :app:assembleRelease) ;;
           esac
           ./gradlew "${tasks[@]}" -Preadmex.requireSigning=true --no-daemon --console=plain --stacktrace
+      - name: Verify Android release permissions
+        run: |
+          if [ "$ARTIFACT_TYPE" != apk ]; then
+            python3 scripts/verify-android-permissions.py source/mobile-app/native/android/app/build/intermediates/bundle_manifest/release/processApplicationManifestReleaseForBundle/AndroidManifest.xml
+          fi
+          if [ "$ARTIFACT_TYPE" != aab ]; then
+            python3 scripts/verify-android-permissions.py source/mobile-app/native/android/app/build/intermediates/packaged_manifests/release/processReleaseManifestForPackage/AndroidManifest.xml
+          fi
       - name: Verify signing and 16 KB compatibility
         id: verify
         run: |
