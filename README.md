@@ -37,7 +37,7 @@ FEISHU_RELEASE_WEBHOOK_SECRET
 
 The pushed source ref must contain `mobile-app/native/version.json`, the native iOS generator and Kotlin DSL signing support. Legacy refs fail preflight instead of building an old shell. Both platforms read the shared version/build baseline; CI overrides `APP_VERSION` / `APP_BUILD_NUMBER` without modifying the shared file. `version:update` in the source repository updates only its version.
 
-Generated EN/ZH locale and avatar resources are checked against the shared catalogs using pinned `tsx@4.20.0`; the pipeline does not install Capacitor or the full website dependencies. iOS keeps its fixed SwiftPM revisions. Android runs the checked-in wrapper, JVM tests and lint before producing signed AAB/APK, verifies signatures and 16 KB packaging, and retains R8 mapping separately.
+Generated EN/ZH locale and avatar resources are checked against the shared catalogs using pinned `tsx@4.20.0`; the pipeline does not install Capacitor or the full website dependencies. Current native source excludes Getui on both platforms. SDK-free iOS archives require neither a SwiftPM lockfile nor APNs entitlement; signature, provisioning profile, version, architecture and dSYM checks still apply. Older source refs containing Getui retain pinned revisions and vendor metadata repair. Android runs the checked-in wrapper, JVM tests and lint before producing signed AAB/APK, verifies signatures and 16 KB packaging, and retains R8 mapping separately.
 
 Optional SDK secrets (missing configuration does not block builds or store submission):
 
@@ -48,7 +48,7 @@ GETUI_IOS_APP_SECRET
 GETUI_ANDROID_APP_ID
 ```
 
-Empty configuration explicitly disables push; partial iOS configuration fails. iOS values are written to a disposable, mode-0600 `Config/Local.xcconfig` and removed in `always()` cleanup. Android receives only its client AppID. Never inject the server MasterSecret into a client. Real push delivery remains a separate device acceptance check.
+These optional settings support older source refs that include the SDK. Empty configuration disables push; partial iOS configuration fails. iOS values are written to a disposable, mode-0600 `Config/Local.xcconfig` and removed in `always()` cleanup. Android receives only its client AppID. Current native source does not embed these values or include the SDK, so keys alone cannot enable push. Never inject the server MasterSecret into a client. Restoring push requires source changes and device acceptance checks.
 
 A source and pipeline change must be pushed together before dispatching the new workflows. The default `ref=main` cannot consume local uncommitted files. Source SHA verification, tag archiving, store upload, R2 and notification contracts are retained.
 

@@ -3,10 +3,23 @@ import pathlib
 import plistlib
 import tempfile
 import unittest
+from unittest.mock import patch
+import sys
 
 SCRIPT = pathlib.Path(__file__).with_name('repair-getui-metadata.py')
 
 class RepairTests(unittest.TestCase):
+    def test_sdk_free_archive_verifies_signature_without_lockfile_or_resigning(self):
+        spec = importlib.util.spec_from_file_location('repair', SCRIPT)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        with tempfile.TemporaryDirectory() as directory:
+            app = pathlib.Path(directory) / 'ReadmeX.app'
+            app.mkdir()
+            with patch.object(sys, 'argv', [str(SCRIPT), str(app), str(app / 'missing-Package.resolved')]), patch.object(module.subprocess, 'run') as run:
+                module.main()
+                run.assert_called_once_with(['codesign', '--verify', '--deep', '--strict', str(app.resolve())], check=True)
+
     def test_implementation_exists(self):
         self.assertTrue(SCRIPT.exists())
 

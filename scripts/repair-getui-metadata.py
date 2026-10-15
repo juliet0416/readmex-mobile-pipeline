@@ -25,9 +25,14 @@ def repair_frameworks(root):
 
 def main():
     app = pathlib.Path(sys.argv[1]).resolve()
-    manifest = pathlib.Path(sys.argv[2]).read_text()
     if app.suffix != '.app':
         raise ValueError('Expected archived .app')
+    # 新原生包已移除个推；保留签名校验，旧版本仍执行原有修复与锁定校验。
+    if not any((app / 'Frameworks' / f'{name}.framework').exists() for name in VENDORS):
+        subprocess.run(['codesign', '--verify', '--deep', '--strict', str(app)], check=True)
+        print('[metadata] Getui SDK absent; signature verified', flush=True)
+        return
+    manifest = pathlib.Path(sys.argv[2]).read_text()
     for _, (_, _, revision) in VENDORS.items():
         if revision not in manifest:
             raise ValueError('Getui SDK pin changed; review metadata repair versions')
