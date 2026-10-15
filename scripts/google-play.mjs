@@ -32,6 +32,50 @@ async function playSession(account, packageName, fetchImpl) {
   return { url, headers };
 }
 
+//#region 只读商店查询与临时编辑清理重试
+const transientPlayStatuses = new Set([429, 500, 502, 503, 504]);
+const defaultRetry = { sleep: ms => new Promise(resolve => setTimeout(resolve, ms)), warn: message => console.warn(message) };
+
+async function playLookupRequest(url, method, headers, label, fetchImpl, retry) {
+  // 仅用于 GET/DELETE；不重做创建编辑、上传或提交等有副作用的请求。
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    let response, failure;
+    try {
+      response = await fetchImpl(url, { method, headers, signal: AbortSignal.timeout(30000) });
+      if (response.ok || (method === 'DELETE' && response.status === 404)) return method === 'GET' ? await response.json() : response;
+    } catch (cause) {
+      if (!['TimeoutError', 'AbortError'].includes(cause?.name) && !(cause instanceof TypeError && ['fetch failed', 'terminated'].includes(cause.message))) throw cause;
+      response = undefined;
+      failure = new Error(`${label} network error (${cause.name})`, { cause });
+      failure.retryable = true;
+    }
+    if (response) {
+      failure = new Error(`${label} HTTP ${response.status}`);
+      failure.retryable = transientPlayStatuses.has(response.status);
+      // 释放错误响应体仅为回收连接，失败时仍保留原始 HTTP 状态。
+      try { await response.body?.cancel(); } catch {}
+    }
+    if (!failure.retryable || attempt === 3) throw failure;
+    const after = response?.headers.get('retry-after');
+    const requestedDelay = after ? (/^\d+$/.test(after) ? Number(after) * 1000 : Date.parse(after) - Date.now()) : 0;
+    const delay = Math.max(2000 * 2 ** (attempt - 1), Math.min(30000, Number.isFinite(requestedDelay) ? requestedDelay : 0));
+    // 不输出 URL、凭据、响应体和底层异常消息，防止诊断日志泄露密钥。
+    retry.warn(`[play] ${failure.message}; retry ${attempt + 1}/3 in ${delay}ms`);
+    await retry.sleep(delay);
+  }
+}
+
+async function cleanupLookupEdit(url, headers, label, fetchImpl, retry) {
+  try {
+    await playLookupRequest(url, 'DELETE', headers, label, fetchImpl, retry);
+  } catch (error) {
+    if (!error.retryable) throw error;
+    // 临时编辑从未提交商店变更；清理瞬态失败不使已验证的查询结果失效。
+    retry.warn(`[play] ${error.message}; temporary edit cleanup incomplete after 3 attempts; no store changes committed`);
+  }
+}
+//#endregion
+
 export async function openPlayEdit(account, packageName, fetchImpl = fetch) {
   const { url, headers } = await playSession(account, packageName, fetchImpl);
   const response = await fetchImpl(url, { method: 'POST', headers, body: '{}', signal: AbortSignal.timeout(30000) });
@@ -41,30 +85,32 @@ export async function openPlayEdit(account, packageName, fetchImpl = fetch) {
   return edit.id;
 }
 
-export async function verifyPlayAccess(account, packageName, fetchImpl = fetch) {
+export async function verifyPlayAccess(account, packageName, fetchImpl = fetch, retryOptions = {}) {
+  const retry = { ...defaultRetry, ...retryOptions };
   const { url, headers } = await playSession(account, packageName, fetchImpl);
   const response = await fetchImpl(url, { method: 'POST', headers, body: '{}', signal: AbortSignal.timeout(30000) });
-  const edit = await response.json();
   if (response.status === 404) throw new Error('Play package not initialized: upload the first signed AAB manually in Play Console');
-  if (!response.ok || !edit.id) throw new Error(`Google Play access failed (HTTP ${response.status}); check API enablement and Play app permissions`);
+  if (!response.ok) throw new Error(`Google Play access failed (HTTP ${response.status}); check API enablement and Play app permissions`);
+  const edit = await response.json();
+  if (!edit.id) throw new Error('Google Play access returned no temporary edit ID');
   // 仅验证发布接口权限，删除临时编辑，不提交任何商店变更。
-  const cleanup = await fetchImpl(`${url}/${encodeURIComponent(edit.id)}`, { method: 'DELETE', headers, signal: AbortSignal.timeout(30000) });
-  if (!cleanup.ok) throw new Error(`Google Play temporary edit cleanup failed (HTTP ${cleanup.status})`);
+  await cleanupLookupEdit(`${url}/${encodeURIComponent(edit.id)}`, headers, 'Google Play temporary edit cleanup', fetchImpl, retry);
   return { packageName, access: 'verified' };
 }
 
-export async function highestAndroidBuild(account, packageName, fetchImpl = fetch) {
+export async function highestAndroidBuild(account, packageName, fetchImpl = fetch, retryOptions = {}) {
+  const retry = { ...defaultRetry, ...retryOptions };
   const { url, headers } = await playSession(account, packageName, fetchImpl);
   const response = await fetchImpl(url, { method: 'POST', headers, body: '{}', signal: AbortSignal.timeout(30000) });
+  if (!response.ok) throw new Error(`Play build lookup edit HTTP ${response.status}`);
   const edit = await response.json();
-  if (!response.ok || !edit.id) throw new Error(`Play build lookup edit HTTP ${response.status}`);
+  if (!edit.id) throw new Error('Play build lookup returned no temporary edit ID');
   const editUrl = `${url}/${encodeURIComponent(edit.id)}`;
+  let queryFailed = false;
   try {
     const numbers = [];
     for (const resource of ['bundles', 'tracks']) {
-      const result = await fetchImpl(`${editUrl}/${resource}`, { method: 'GET', headers, signal: AbortSignal.timeout(30000) });
-      if (!result.ok) throw new Error(`Play ${resource} lookup HTTP ${result.status}`);
-      const data = await result.json();
+      const data = await playLookupRequest(`${editUrl}/${resource}`, 'GET', headers, `Play ${resource} lookup`, fetchImpl, retry);
       const values = resource === 'bundles' ? (data.bundles ?? []).map(bundle => bundle.versionCode) : (data.tracks ?? []).flatMap(track => (track.releases ?? []).flatMap(release => release.versionCodes ?? []));
       for (const value of values) {
         if (!/^[1-9]\d*$/.test(String(value)) || !Number.isSafeInteger(Number(value))) throw new Error('Invalid Play build number');
@@ -72,9 +118,16 @@ export async function highestAndroidBuild(account, packageName, fetchImpl = fetc
       }
     }
     return Math.max(0, ...numbers);
+  } catch (error) {
+    queryFailed = true;
+    throw error;
   } finally {
-    const cleanup = await fetchImpl(editUrl, { method: 'DELETE', headers, signal: AbortSignal.timeout(30000) });
-    if (!cleanup.ok) throw new Error(`Play build lookup edit cleanup HTTP ${cleanup.status}`);
+    try {
+      await cleanupLookupEdit(editUrl, headers, 'Play build lookup edit cleanup', fetchImpl, retry);
+    } catch (error) {
+      if (!queryFailed) throw error;
+      retry.warn(`[play] ${error.message}; preserving original build lookup error`);
+    }
   }
 }
 

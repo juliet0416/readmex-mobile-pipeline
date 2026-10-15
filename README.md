@@ -82,6 +82,10 @@ npm run pipeline:release -- --platform ios --ref <pushed-source-SHA> --version 1
 
 Omit `--build-number` to resolve the next number in CI from the store, native source and Actions artifact history. An explicit override must be higher than the last upload. `version:update` is separate and is not required to build an existing version. Pipeline version/signing preparation only modifies the disposable CI checkout.
 
+Google Play build-number reads and temporary-edit cleanup try at most three times for HTTP 429/500/502/503/504, network failures and timeouts. Requests time out after 30 seconds; retry delays start at 2 and 4 seconds and honor `Retry-After` up to 30 seconds per wait. A cleanup 404 means the edit is already gone. Exhausted transient cleanup failures produce a warning and preserve a successful lookup; failed lookups still stop the build, and cleanup errors never replace the original lookup error. Authentication/permission failures are not retried. This policy does not repeat edit creation, uploads or release commits.
+
+After a pipeline fix reaches `main`, start a new workflow dispatch (for example, `bun pipeline:release` in the source project, reusing its existing tag when appropriate). GitHub's **Re-run jobs** uses the original run's pipeline commit, so an older failed run will not pick up the fix.
+
 ## Interactive source entry
 
 From the ReadmeX repository, install dependencies with Node.js 22.13+ and run `npm run pipeline:release`. The wizard defaults to Chinese and follows Ottermind: platform → source tag → Android artifacts → store submission → cache clearing → confirmation. Arrow keys choose single options; Space toggles aab/APK with [✓]/[ ] markers. Every later step includes a back row; Enter on that row goes back immediately without selecting it. Custom version input accepts b to go back. Existing answers are preserved when stepping backwards.
